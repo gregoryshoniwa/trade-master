@@ -1,0 +1,9 @@
+node_modules
+.next
+.turbo
+.git
+.env*
+*.log
+Dockerfile
+.dockerignore
+.DS_Store
