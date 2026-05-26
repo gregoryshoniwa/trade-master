@@ -5,6 +5,7 @@ from slugify import slugify
 
 from app.auth import CurrentAccount
 from app.db import acquire
+from app.personalities import STARTER_AGENTS, apply_preset
 from app.schemas import Company, CompanyCreate, CompanyList
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -74,6 +75,11 @@ async def create_company(body: CompanyCreate, account_id: CurrentAccount):
                 account_id,
             )
 
+            # Seed the starter Agent set (PLAN §6.4): Manager + 5 strategy
+            # employees + Research. Manager is inserted first so the
+            # employees can reports_to it.
+            await _seed_starter_agents(conn, row["id"], account_id)
+
     return Company(
         id=row["id"],
         name=row["name"],
@@ -99,3 +105,41 @@ async def _unique_slug(conn, name: str) -> str:
         if n > 1000:
             raise HTTPException(status.HTTP_409_CONFLICT, "slug exhaustion")
     return candidate
+
+
+async def _seed_starter_agents(conn, company_id, created_by) -> None:
+    """Insert the 7 default agents (Alpha + Trendy/Brakey/Rocky/Rev/Action
+    + Scout), with the Manager first so employees can report to it."""
+    manager_id = None
+    for spec in STARTER_AGENTS:
+        preset = apply_preset(spec["personality"])
+        reports_to = manager_id if spec["role"] != "manager" else None
+        inserted_id = await conn.fetchval(
+            """
+            INSERT INTO agents (
+                company_id, name, role, reports_to_agent_id,
+                llm_provider, llm_model, voice_id, strategies,
+                personality, trade_selection_mode,
+                kelly_fraction, min_confidence_threshold, min_payoff_ratio,
+                max_trades_per_day, target_holding_secs,
+                trade_mode, created_by
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                $5, $6, $7, $8,
+                $9, 'balanced',
+                $10, $11, $12,
+                $13, $14,
+                'approve_each', $15
+            )
+            RETURNING id
+            """,
+            company_id, spec["name"], spec["role"], reports_to,
+            spec["llm_provider"], spec["llm_model"], spec["voice_id"], spec["strategies"],
+            spec["personality"],
+            preset["kelly_fraction"], preset["min_confidence_threshold"], preset["min_payoff_ratio"],
+            preset["max_trades_per_day"], preset["target_holding_secs"],
+            created_by,
+        )
+        if spec["role"] == "manager":
+            manager_id = inserted_id

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, init_pool
+from app.routes import agents as agents_routes
 from app.routes import auth as auth_routes
 from app.routes import companies as companies_routes
 from app.routes import me as me_routes
@@ -56,3 +57,5 @@ async def healthz():
 app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(me_routes.router, prefix="/api/v1")
 app.include_router(companies_routes.router, prefix="/api/v1")
+app.include_router(agents_routes.router, prefix="/api/v1")
+app.include_router(agents_routes.personality_router, prefix="/api/v1")
