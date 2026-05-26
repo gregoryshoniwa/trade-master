@@ -91,6 +91,27 @@ services:
     ports:
       - "8080:8080"
 
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: tm-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
+      NATS_URL: nats://nats:4222
+      REDIS_URL: redis://redis:6379/0
+      AUTH_SECRET: ${AUTH_SECRET:-dev_change_me_to_a_long_random_string}
+      JWT_ISSUER: ${JWT_ISSUER:-trademaster-local}
+      CORS_ORIGINS: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+
   web:
     build:
       context: ./apps/web
@@ -99,10 +120,10 @@ services:
     restart: unless-stopped
     depends_on:
       - gateway
+      - api
     environment:
       # Browser-facing URLs — must use host-reachable addresses, not docker
-      # service names, because the WebSocket connection is made by the
-      # user's browser, not by the container.
+      # service names, because requests are made by the user's browser.
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8080}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       NEXT_PUBLIC_DEFAULT_SYMBOL: ${DERIV_DEFAULT_SYMBOL:-R_75}
