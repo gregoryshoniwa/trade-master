@@ -25,6 +25,14 @@ export default function Nav() {
           </Link>
 
           {active && (
+            <>
+            <Link
+              href="/agents"
+              className="ml-3 hidden text-sm text-text-dim hover:text-text sm:inline"
+            >
+              Agents
+            </Link>
+
             <div className="relative ml-3">
               <button
                 type="button"
@@ -76,6 +84,7 @@ export default function Nav() {
                 </div>
               )}
             </div>
+            </>
           )}
         </div>
 
