@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { AuthProvider } from "@/lib/auth";
+import Nav from "@/components/Nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +15,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-bg text-text antialiased">{children}</body>
+      <body className="min-h-screen bg-bg text-text antialiased">
+        <AuthProvider>
+          <Nav />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }
