@@ -107,7 +107,8 @@ export default function ApprovalsPage() {
               <thead className="border-b border-border bg-bg-elev-1 text-text-mute">
                 <tr>
                   <Th>When</Th><Th>Agent</Th><Th>Asset</Th><Th>Side</Th>
-                  <Th className="text-right">Stake</Th><Th className="text-right">Conf</Th><Th>Status</Th>
+                  <Th className="text-right">Stake</Th><Th className="text-right">Conf</Th>
+                  <Th>Status</Th><Th className="text-right">P&amp;L</Th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +123,17 @@ export default function ApprovalsPage() {
                     <Td className="num text-right">{FMT_USD.format(i.stake_usd)}</Td>
                     <Td className="num text-right text-text-dim">{(i.confidence * 100).toFixed(0)}%</Td>
                     <Td><StatusPill status={i.status} /></Td>
+                    <Td className="num text-right">
+                      {i.realized_pnl_usd != null ? (
+                        <span className={i.realized_pnl_usd >= 0 ? "text-bull" : "text-bear"}>
+                          {i.realized_pnl_usd >= 0 ? "▲" : "▼"} {FMT_USD.format(Math.abs(i.realized_pnl_usd))}
+                        </span>
+                      ) : i.status === "executed" ? (
+                        <span className="text-text-mute">open</span>
+                      ) : (
+                        <span className="text-text-mute">—</span>
+                      )}
+                    </Td>
                   </tr>
                 ))}
               </tbody>

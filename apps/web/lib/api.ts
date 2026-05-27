@@ -420,6 +420,12 @@ export type TradeIntent = {
   expires_at: string | null;
   executed_at: string | null;
   broker_contract_id: string | null;
+  buy_price_usd: number | null;
+  longcode: string | null;
+  realized_pnl_usd: number | null;
+  exit_reason: string | null;
+  closed_at: string | null;
+  execution_error: string | null;
   created_at: string;
   updated_at: string;
 };
