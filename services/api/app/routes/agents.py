@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth import CurrentAccount
 from app.db import acquire
+from app.forecasting import is_known as is_known_forecast
 from app.llm import is_known as is_known_model
 from app.personalities import PRESETS, apply_preset
 from app.schemas import (
@@ -63,6 +64,7 @@ def _row_to_agent(r: asyncpg.Record) -> Agent:
         reports_to_agent_id=r["reports_to_agent_id"],
         llm_provider=r["llm_provider"],
         llm_model=r["llm_model"],
+        forecasting_model=r["forecasting_model"],
         voice_id=r["voice_id"],
         voice_enabled=r["voice_enabled"],
         strategies=list(r["strategies"]),
@@ -131,6 +133,12 @@ async def create_agent(
             f"unsupported model {body.llm_provider}/{body.llm_model} — "
             "pick one from /api/v1/llm/models",
         )
+    if not is_known_forecast(body.forecasting_model):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"unsupported forecasting_model {body.forecasting_model} — "
+            "pick one from /api/v1/forecasting/models",
+        )
 
     # Apply preset defaults for any fields the caller didn't provide.
     preset_vals = apply_preset(body.personality)
@@ -158,7 +166,7 @@ async def create_agent(
             """
             INSERT INTO agents (
                 company_id, name, avatar_url, role, reports_to_agent_id,
-                llm_provider, llm_model, llm_config, voice_id, voice_enabled,
+                llm_provider, llm_model, forecasting_model, llm_config, voice_id, voice_enabled,
                 strategies, allowed_assets, allowed_contract_types,
                 allocated_balance_usd, max_position_size_usd, max_daily_drawdown_pct,
                 personality, trade_selection_mode,
@@ -168,18 +176,18 @@ async def create_agent(
             )
             VALUES (
                 $1, $2, $3, $4, $5,
-                $6, $7, $8, $9, $10,
-                $11, $12, $13,
-                $14, $15, $16,
-                $17, $18,
-                $19, $20, $21,
-                $22, $23, $24,
-                $25, $26, $27
+                $6, $7, $8, $9, $10, $11,
+                $12, $13, $14,
+                $15, $16, $17,
+                $18, $19,
+                $20, $21, $22,
+                $23, $24, $25,
+                $26, $27, $28
             )
             RETURNING *
             """,
             company_id, body.name, body.avatar_url, body.role, body.reports_to_agent_id,
-            body.llm_provider, body.llm_model, json.dumps(body.llm_config), body.voice_id, body.voice_enabled,
+            body.llm_provider, body.llm_model, body.forecasting_model, json.dumps(body.llm_config), body.voice_id, body.voice_enabled,
             body.strategies, body.allowed_assets, body.allowed_contract_types,
             body.allocated_balance_usd, body.max_position_size_usd, body.max_daily_drawdown_pct,
             body.personality, body.trade_selection_mode,
@@ -215,6 +223,13 @@ async def update_agent(
                 status.HTTP_400_BAD_REQUEST,
                 f"unsupported model {prov}/{mdl} — pick one from /api/v1/llm/models",
             )
+
+    if body.forecasting_model is not None and not is_known_forecast(body.forecasting_model):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"unsupported forecasting_model {body.forecasting_model} — "
+            "pick one from /api/v1/forecasting/models",
+        )
 
     fields = body.model_dump(exclude_none=True)
     if not fields:

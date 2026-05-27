@@ -99,9 +99,10 @@ class DecisionLoop:
             payload = json.loads(msg.data)
         except Exception:
             return
-        # We currently only act on TTM. Other models will be added as we
-        # decide what they're for (and the ensemble layer arrives).
-        if payload.get("model") not in {"ttm-granite-r2"}:
+        # Route by model: a forecast is matched only to agents whose
+        # forecasting_model equals payload["model"] (done in the SQL below).
+        # We just need a model label present here.
+        if not payload.get("model"):
             return
 
         try:
@@ -110,17 +111,18 @@ class DecisionLoop:
             log.exception("decision loop _evaluate_forecast failed")
 
     async def _evaluate_forecast(self, fc: dict[str, Any]) -> None:
+        model = fc.get("model")
         asset = fc.get("asset")
         direction = fc.get("point_direction")
         confidence = float(fc.get("confidence_score") or 0.0)
         last_price = float(fc.get("last_price") or 0.0)
-        if not asset or direction not in {"up", "down"} or last_price <= 0:
+        if not model or not asset or direction not in {"up", "down"} or last_price <= 0:
             return
 
         async with acquire() as conn:
-            # Match candidates across ALL companies. Each row carries its
-            # company_id so we persist intents correctly. Filter on the
-            # cheap conditions in SQL; finer rules run per-row below.
+            # Match candidates across ALL companies whose forecasting_model is
+            # this signal's model. Each row carries its company_id so we persist
+            # intents correctly. Cheap filters in SQL; finer rules run per-row.
             rows = await conn.fetch(
                 """
                 SELECT a.id, a.company_id, a.name, a.role, a.personality,
@@ -128,14 +130,16 @@ class DecisionLoop:
                        a.min_confidence_threshold, a.kelly_fraction,
                        a.min_payoff_ratio, a.max_position_size_usd,
                        a.allocated_balance_usd, a.trade_mode,
-                       a.is_active, a.is_paused, a.target_holding_secs
+                       a.is_active, a.is_paused, a.target_holding_secs,
+                       a.forecasting_model
                 FROM agents a
                 WHERE a.role = 'employee'
                   AND a.is_active = TRUE
                   AND a.is_paused = FALSE
+                  AND a.forecasting_model = $2
                   AND $1 >= a.min_confidence_threshold
                 """,
-                confidence,
+                confidence, model,
             )
 
         for r in rows:
@@ -186,8 +190,9 @@ class DecisionLoop:
 
         duration_secs = int(agent["target_holding_secs"] or 600)
 
+        model = fc.get("model")
         rationale = (
-            f"{agent['name']} ({', '.join(strategies)}): TTM says {direction} "
+            f"{agent['name']} ({', '.join(strategies)}): {model} says {direction} "
             f"with confidence {confidence:.2f} (floor {float(agent['min_confidence_threshold']):.2f}). "
             f"Stake sized via Kelly {kelly:.2f} × allocation × confidence."
         )

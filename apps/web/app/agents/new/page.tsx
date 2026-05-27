@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import ForecastingModelPicker from "@/components/ForecastingModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
 import { api, ApiError, type AgentRole, type Personality } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -14,6 +15,7 @@ export default function NewAgentPage() {
   const [name, setName] = useState("");
   const [role, setRole] = useState<AgentRole>("employee");
   const [personality, setPersonality] = useState<Personality>("balanced");
+  const [forecastingModel, setForecastingModel] = useState("ttm-granite-r2");
   const [strategies, setStrategies] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export default function NewAgentPage() {
         role,
         llm_provider: defaults.provider,
         llm_model: defaults.model,
+        forecasting_model: forecastingModel,
         personality,
         strategies: role === "employee" ? strategies : [],
       });
@@ -111,6 +114,15 @@ export default function NewAgentPage() {
             for this role. Edit later from the agent detail page.
           </p>
         </Section>
+
+        {role === "employee" && (
+          <Section title="Forecast model">
+            <ForecastingModelPicker
+              value={forecastingModel}
+              onChange={setForecastingModel}
+            />
+          </Section>
+        )}
 
         <Section title="Personality">
           <PersonalityPicker value={personality} onChange={setPersonality} />

@@ -159,6 +159,7 @@ class AgentCreate(BaseModel):
     reports_to_agent_id: UUID | None = None
     llm_provider: str = Field(min_length=2, max_length=32)
     llm_model: str = Field(min_length=2, max_length=80)
+    forecasting_model: str = "ttm-granite-r2"
     llm_config: dict = Field(default_factory=dict)
     voice_id: str | None = None
     voice_enabled: bool = True
@@ -186,6 +187,7 @@ class AgentUpdate(BaseModel):
     reports_to_agent_id: UUID | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    forecasting_model: str | None = None
     llm_config: dict | None = None
     voice_id: str | None = None
     voice_enabled: bool | None = None
@@ -216,6 +218,7 @@ class Agent(BaseModel):
     reports_to_agent_id: UUID | None
     llm_provider: str
     llm_model: str
+    forecasting_model: str
     voice_id: str | None
     voice_enabled: bool
     strategies: list[str]

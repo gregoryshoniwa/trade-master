@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import ForecastingModelPicker from "@/components/ForecastingModelPicker";
 import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
 import { api, ApiError, type Agent, type Personality, type TradeMode } from "@/lib/api";
@@ -28,6 +29,7 @@ export default function AgentDetailPage() {
   const [maxPos, setMaxPos] = useState(25);
   const [llmProvider, setLlmProvider] = useState("");
   const [llmModel, setLlmModel] = useState("");
+  const [forecastingModel, setForecastingModel] = useState("ttm-granite-r2");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -43,6 +45,7 @@ export default function AgentDetailPage() {
         setMaxPos(a.max_position_size_usd);
         setLlmProvider(a.llm_provider);
         setLlmModel(a.llm_model);
+        setForecastingModel(a.forecasting_model);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -67,6 +70,7 @@ export default function AgentDetailPage() {
         max_position_size_usd: maxPos,
         llm_provider: llmProvider,
         llm_model: llmModel,
+        forecasting_model: forecastingModel,
       });
       setAgent(updated);
       setDirty(false);
@@ -217,6 +221,13 @@ export default function AgentDetailPage() {
               markDirty(setLlmProvider)(p);
               setLlmModel(m);
             }}
+          />
+        </Section>
+
+        <Section title="Forecast model">
+          <ForecastingModelPicker
+            value={forecastingModel}
+            onChange={(k) => markDirty(setForecastingModel)(k)}
           />
         </Section>
 

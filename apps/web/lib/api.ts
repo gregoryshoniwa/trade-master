@@ -96,6 +96,7 @@ export type Agent = {
   reports_to_agent_id: string | null;
   llm_provider: string;
   llm_model: string;
+  forecasting_model: string;
   voice_id: string | null;
   voice_enabled: boolean;
   strategies: string[];
@@ -128,6 +129,7 @@ export type AgentCreate = {
   role: AgentRole;
   llm_provider: string;
   llm_model: string;
+  forecasting_model?: string;
   personality?: Personality;
   trade_selection_mode?: Agent["trade_selection_mode"];
   strategies?: string[];
@@ -334,6 +336,9 @@ export const api = {
   listLLMModels: () =>
     request<{ models: LLMModelDef[] }>("/api/v1/llm/models"),
 
+  listForecastingModels: () =>
+    request<{ models: ForecastModelDef[] }>("/api/v1/forecasting/models"),
+
   payroll: (companyId: string, window: PayrollWindow = "30d") =>
     request<PayrollSummary>(
       `/api/v1/companies/${companyId}/payroll?window=${window}`,
@@ -489,6 +494,22 @@ export type LLMModelDef = {
   output_cost_per_1m_usd: number;
   supports_tools: boolean;
   tier: LLMTier;
+};
+
+// ─── forecasting (TSFM) model types ───
+
+export type ForecastModelDef = {
+  key: string;
+  label: string;
+  family: string;
+  params: string;
+  license: string;
+  inputs: string;
+  granularity: string;
+  context_length: number;
+  prediction_length: number;
+  description: string;
+  tier: "fast" | "mid" | "heavy";
 };
 
 export type PayrollWindow = "today" | "7d" | "30d" | "mtd" | "all";
