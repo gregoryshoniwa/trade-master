@@ -50,6 +50,12 @@ export default function Nav() {
             >
               Payroll
             </Link>
+            <Link
+              href="/approvals"
+              className="hidden text-sm text-text-dim hover:text-text sm:inline"
+            >
+              Approvals
+            </Link>
 
             <div className="relative ml-3">
               <button

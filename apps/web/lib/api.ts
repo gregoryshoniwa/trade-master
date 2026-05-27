@@ -338,6 +338,90 @@ export const api = {
     request<PayrollSummary>(
       `/api/v1/companies/${companyId}/payroll?window=${window}`,
     ),
+
+  // ─── approvals + intents ───
+  listPendingApprovals: (companyId: string) =>
+    request<{ intents: TradeIntent[] }>(
+      `/api/v1/companies/${companyId}/approvals`,
+    ),
+
+  listIntents: (
+    companyId: string,
+    status: TradeIntentStatus | "all" = "all",
+    limit = 50,
+  ) =>
+    request<{ intents: TradeIntent[] }>(
+      `/api/v1/companies/${companyId}/intents?status=${status}&limit=${limit}`,
+    ),
+
+  approveIntent: (companyId: string, intentId: string, reason?: string) =>
+    request<TradeIntent>(
+      `/api/v1/companies/${companyId}/approvals/${intentId}/approve`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+
+  rejectIntent: (companyId: string, intentId: string, reason?: string) =>
+    request<TradeIntent>(
+      `/api/v1/companies/${companyId}/approvals/${intentId}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+};
+
+export type TradeIntentStatus =
+  | "pending_risk"
+  | "rejected_by_risk"
+  | "pending_approval"
+  | "approved"
+  | "auto_approved"
+  | "rejected_by_user"
+  | "expired"
+  | "executed"
+  | "failed_execution";
+
+export type RiskCheck = {
+  name: string;
+  passed: boolean;
+  detail?: string | null;
+};
+
+export type RiskVerdict = {
+  ok: boolean;
+  reason: string | null;
+  checks: RiskCheck[];
+  applied_stake_usd: number | null;
+};
+
+export type TradeIntent = {
+  id: string;
+  client_uuid: string;
+  company_id: string;
+  agent_id: string;
+  agent_name: string;
+  asset: string;
+  contract_type: string;
+  direction: "up" | "down" | "flat";
+  stake_usd: number;
+  multiplier: number | null;
+  duration_secs: number;
+  entry_price: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  source_model: string;
+  source_asof_ts: string;
+  confidence: number;
+  expected_payoff_ratio: number | null;
+  expected_value_usd: number | null;
+  rationale: string;
+  status: TradeIntentStatus;
+  risk_verdict: RiskVerdict | null;
+  user_decision_by: string | null;
+  user_decision_at: string | null;
+  user_decision_reason: string | null;
+  expires_at: string | null;
+  executed_at: string | null;
+  broker_contract_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 // ─── LLM model + payroll types ───
