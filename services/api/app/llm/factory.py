@@ -6,6 +6,7 @@ from app.llm.anthropic_adapter import AnthropicAdapter
 from app.llm.base import LLMAdapter
 from app.llm.gemini_adapter import GeminiAdapter
 from app.llm.openrouter_adapter import OpenRouterAdapter
+from app.llm.vllm_adapter import VllmAdapter
 
 
 @lru_cache(maxsize=8)
@@ -17,14 +18,13 @@ def get_adapter(provider: str) -> LLMAdapter:
         return GeminiAdapter()
     if p in ("openrouter",):
         return OpenRouterAdapter()
-    # Phase 1 stubs — surface a clear error rather than failing in some
-    # cryptic library deep-down. Local/Ollama gets a dedicated adapter
-    # when we wire it.
+    if p in ("vllm", "local"):
+        # `local` is a back-compat alias — both route through vLLM's
+        # OpenAI-compatible endpoint.
+        return VllmAdapter()
     if p in ("openai",):
         raise ValueError(
             "OpenAI direct adapter not implemented yet; use 'openrouter' "
             "with model 'openai/gpt-5' instead",
         )
-    if p in ("local", "ollama"):
-        raise ValueError("local/ollama adapter not implemented yet (Phase 2)")
     raise ValueError(f"unsupported LLM provider: {provider}")

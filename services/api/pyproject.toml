@@ -13,6 +13,8 @@ dependencies = [
     "argon2-cffi>=23.1.0",
     "python-slugify>=8.0.4",
     "httpx>=0.27.0",
+    # Internal event bus
+    "nats-py>=2.9.0",
     # LLM providers
     "anthropic>=0.39.0",
     "google-genai>=0.3.0",

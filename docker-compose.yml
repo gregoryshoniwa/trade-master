@@ -117,6 +117,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
       # mem0's huggingface embedder downloads sentence-transformers/all-MiniLM-L6-v2
       # on first use. Cache it on a volume so subsequent rebuilds skip the download.
       HF_HOME: /cache/hf
@@ -165,6 +167,39 @@ services:
       NEXT_PUBLIC_DEFAULT_SYMBOL: ${DERIV_DEFAULT_SYMBOL:-R_75}
     ports:
       - "3000:3000"
+
+  # vLLM — optional self-hosted LLM. Opt-in via:
+  #     docker compose --profile with-vllm up vllm
+  # M1 caveats: vLLM is CUDA-first. CPU backend exists on x86_64 but
+  # is rough on linux/arm64 (Mac M1 Docker). Realistic local model
+  # for this profile is Phi-3-mini-4k-instruct. For real throughput,
+  # run vLLM natively on a CUDA box and point VLLM_BASE_URL at that.
+  vllm:
+    profiles: ["with-vllm"]
+    image: vllm/vllm-openai:latest
+    container_name: tm-vllm
+    restart: unless-stopped
+    command:
+      - "--model=${VLLM_MODEL:-microsoft/Phi-3-mini-4k-instruct}"
+      - "--port=8000"
+      - "--host=0.0.0.0"
+      - "--max-model-len=${VLLM_MAX_MODEL_LEN:-4096}"
+      - "--enforce-eager"
+    environment:
+      HF_HOME: /cache/hf
+      HUGGINGFACE_HUB_CACHE: /cache/hf
+      VLLM_USE_MODELSCOPE: "False"
+    volumes:
+      - hf-cache:/cache/hf
+    ports:
+      - "18082:8000"
+    # GPU passthrough is requested when available; harmless on Mac (no
+    # GPU is exposed and vLLM falls back to its CPU backend).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
 
 volumes:
   postgres-data:

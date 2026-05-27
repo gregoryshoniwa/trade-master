@@ -155,30 +155,37 @@ CATALOG: list[ModelDef] = [
         tier="mid",
     ),
 
-    # ────────────────── Local / self-hosted (Ollama compatible) ──────────────────
-    # No metered cost — "freelancer vs employee" framing on the
-    # Payroll page treats these as $0 cash burn (you pay for compute
-    # separately).
+    # ────────────────── Self-hosted via vLLM (OpenAI-compatible) ──────────────────
+    # vLLM serves these from {VLLM_BASE_URL}. No metered token cost —
+    # the Payroll page treats them as "self-hosted employees" with $0
+    # cash burn (you pay for compute separately).
     ModelDef(
-        provider="local", model="llama3.2:3b",
-        label="Llama 3.2 3B (local)", family="local", category="self_hosted",
+        provider="vllm", model="microsoft/Phi-3-mini-4k-instruct",
+        label="Phi-3 mini (vLLM)", family="vllm", category="self_hosted",
+        context_window=4_096,
+        input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
+        tier="tiny",
+    ),
+    ModelDef(
+        provider="vllm", model="meta-llama/Llama-3.2-3B-Instruct",
+        label="Llama 3.2 3B (vLLM)", family="vllm", category="self_hosted",
         context_window=128_000,
         input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
         tier="tiny",
     ),
     ModelDef(
-        provider="local", model="phi3:mini",
-        label="Phi-3 mini (local)", family="local", category="self_hosted",
-        context_window=128_000,
-        input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
-        tier="tiny",
-    ),
-    ModelDef(
-        provider="local", model="qwen2.5:7b",
-        label="Qwen 2.5 7B (local)", family="local", category="self_hosted",
-        context_window=131_000,
+        provider="vllm", model="Qwen/Qwen2.5-7B-Instruct",
+        label="Qwen 2.5 7B (vLLM)", family="vllm", category="self_hosted",
+        context_window=131_072,
         input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
         tier="fast",
+    ),
+    ModelDef(
+        provider="vllm", model="meta-llama/Llama-3.3-70B-Instruct",
+        label="Llama 3.3 70B (vLLM — needs GPU)", family="vllm", category="self_hosted",
+        context_window=128_000,
+        input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
+        tier="mid",
     ),
 ]
 
