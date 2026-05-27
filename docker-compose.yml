@@ -153,6 +153,33 @@ services:
     ports:
       - "18081:8081"
 
+  kronos:
+    build:
+      context: ./services/models/kronos
+      dockerfile: Dockerfile
+    container_name: tm-kronos
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: info
+      GRANULARITY: 60
+      CONTEXT_LENGTH: 256
+      PREDICTION_LENGTH: 12
+      SAMPLE_COUNT: 8
+      WARMUP_COUNT: 360
+      FORECAST_EVERY_SECS: 5
+      MIN_SECS_BETWEEN_FORECASTS: 60
+      HF_HOME: /cache/hf
+      HUGGINGFACE_HUB_CACHE: /cache/hf
+    volumes:
+      - hf-cache:/cache/hf
+    # Internal port 8082; exposed on 18082 to avoid host conflicts.
+    ports:
+      - "18082:8082"
+
   web:
     build:
       context: ./apps/web
