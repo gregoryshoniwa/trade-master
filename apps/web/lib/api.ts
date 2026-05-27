@@ -149,22 +149,72 @@ export type AgentUpdate = Partial<AgentCreate> & {
   event_aware?: boolean;
 };
 
+export type AuthResponse = {
+  account_id: string;
+  email: string;
+  full_name: string | null;
+  is_new_account: boolean;
+  company_id: string | null;
+};
+
+export type InvitePeek = {
+  email: string;
+  company_id: string;
+  company_name: string;
+  role: string;
+  title: string | null;
+};
+
+export type CompanyMember = {
+  account_id: string;
+  email: string;
+  full_name: string | null;
+  role: "owner" | "admin" | "trader" | "viewer";
+  title: string | null;
+  joined_at: string;
+};
+
+export type InviteCreated = {
+  invite_id: string;
+  email: string;
+  role: string;
+  title: string | null;
+  expires_at: string;
+  accept_url: string;
+};
+
 export const api = {
-  requestMagicLink: (email: string, full_name?: string) =>
-    request<{ sent: boolean; dev_link: string | null }>(
-      "/api/v1/auth/magic-link",
-      { method: "POST", body: JSON.stringify({ email, full_name }) },
+  signup: (body: {
+    email: string;
+    password: string;
+    full_name: string;
+    jurisdiction?: string;
+    company_name?: string;
+  }) =>
+    request<AuthResponse>("/api/v1/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  login: (email: string, password: string) =>
+    request<AuthResponse>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+
+  peekInvite: (token: string) =>
+    request<InvitePeek>(
+      `/api/v1/auth/invite?token=${encodeURIComponent(token)}`,
     ),
 
-  verifyMagicLink: (token: string) =>
-    request<{
-      account_id: string;
-      email: string;
-      full_name: string | null;
-      is_new: boolean;
-    }>("/api/v1/auth/verify", {
+  acceptInvite: (body: {
+    token: string;
+    password?: string;
+    full_name?: string;
+  }) =>
+    request<AuthResponse>("/api/v1/auth/accept-invite", {
       method: "POST",
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(body),
     }),
 
   logout: () => request<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" }),
@@ -247,6 +297,37 @@ export const api = {
     request<ChatResponse>(
       `/api/v1/companies/${companyId}/agents/${agentId}/chat`,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  // ─── members + invites ───
+  listMembers: (companyId: string) =>
+    request<{ members: CompanyMember[] }>(
+      `/api/v1/companies/${companyId}/members`,
+    ),
+
+  createInvite: (
+    companyId: string,
+    body: { email: string; role: "admin" | "trader" | "viewer"; title?: string },
+  ) =>
+    request<InviteCreated>(`/api/v1/companies/${companyId}/invites`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateMember: (
+    companyId: string,
+    accountId: string,
+    body: { role: CompanyMember["role"]; title?: string },
+  ) =>
+    request<CompanyMember>(
+      `/api/v1/companies/${companyId}/members/${accountId}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+
+  removeMember: (companyId: string, accountId: string) =>
+    request<void>(
+      `/api/v1/companies/${companyId}/members/${accountId}`,
+      { method: "DELETE" },
     ),
 };
 
