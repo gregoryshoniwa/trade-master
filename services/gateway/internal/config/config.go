@@ -9,6 +9,7 @@ import (
 type Config struct {
 	DerivWSURL    string
 	DerivAppID    string
+	DerivAPIToken string
 	DefaultSymbol string
 	Port          string
 	LogLevelStr   string
@@ -23,6 +24,7 @@ func Load() Config {
 	return Config{
 		DerivWSURL:    getenv("DERIV_WS_URL", "wss://ws.derivws.com/websockets/v3"),
 		DerivAppID:    getenv("DERIV_APP_ID", "1089"),
+		DerivAPIToken: getenv("DERIV_API_TOKEN", ""),
 		DefaultSymbol: getenv("DERIV_DEFAULT_SYMBOL", "R_75"),
 		Port:          getenv("GATEWAY_PORT", "8080"),
 		LogLevelStr:   getenv("GATEWAY_LOG_LEVEL", "info"),

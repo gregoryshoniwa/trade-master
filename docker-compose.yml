@@ -83,6 +83,9 @@ services:
       DERIV_APP_ID: ${DERIV_APP_ID:-1089}
       DERIV_WS_URL: ${DERIV_WS_URL:-wss://ws.derivws.com/websockets/v3}
       DERIV_DEFAULT_SYMBOL: ${DERIV_DEFAULT_SYMBOL:-R_75}
+      # Authorized token for order placement (Phase 1: single demo token
+      # shared across companies; per-company tokens come in Phase 7).
+      DERIV_API_TOKEN: ${DERIV_API_TOKEN:-}
       GATEWAY_PORT: ${GATEWAY_PORT:-8080}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
       REDIS_URL: redis://redis:6379/0

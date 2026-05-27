@@ -14,6 +14,7 @@ import (
 	"github.com/grebles/trade-master/services/gateway/internal/config"
 	"github.com/grebles/trade-master/services/gateway/internal/deriv"
 	"github.com/grebles/trade-master/services/gateway/internal/persist"
+	"github.com/grebles/trade-master/services/gateway/internal/trader"
 	"github.com/grebles/trade-master/services/gateway/internal/ws"
 )
 
@@ -66,6 +67,20 @@ func main() {
 	if err := hub.Start(ctx); err != nil {
 		logger.Error("ws hub failed; exiting", "err", err)
 		os.Exit(1)
+	}
+
+	// Order router — authorized Deriv connection that executes approved
+	// intents. Disabled gracefully if DERIV_API_TOKEN is unset.
+	tradeClient := trader.New(trader.Config{
+		WSURL:    cfg.DerivWSURL,
+		AppID:    cfg.DerivAppID,
+		APIToken: cfg.DerivAPIToken,
+	}, logger)
+	go tradeClient.Run(ctx)
+	orderRouter := trader.NewRouter(tradeClient, nc, logger)
+	if err := orderRouter.Start(ctx); err != nil {
+		logger.Error("order router failed to start", "err", err)
+		// Non-fatal — ticks + fan-out still work without trading.
 	}
 
 	// Deriv subscriber — publishes received ticks to NATS.
