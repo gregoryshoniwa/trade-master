@@ -65,6 +65,15 @@ class GeminiAdapter:
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
+        # Gemini 2.5 models enable "thinking" by default, and those thinking
+        # tokens are drawn from max_output_tokens — so a modest budget gets
+        # consumed by reasoning and the visible answer is truncated mid-
+        # sentence (or empty). We don't need chain-of-thought for chat or
+        # postmortem narratives, so switch it off for deterministic, fully-
+        # spent output budgets. (2.0 models reject thinking_config, hence the
+        # version guard.)
+        if "2.5" in model:
+            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         if system:
             cfg_kwargs["system_instruction"] = system
         if tools:

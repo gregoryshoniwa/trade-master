@@ -12,12 +12,14 @@ trade_intents:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from uuid import UUID
 
 from nats.aio.msg import Msg
 
-from app import bus
+from app import bus, postmortem
 from app.db import acquire
 
 log = logging.getLogger("trademaster.execution")
@@ -98,13 +100,15 @@ async def _on_closed(msg: Msg) -> None:
         return
     try:
         async with acquire() as conn:
-            await conn.execute(
+            # Guard on closed_at IS NULL so a re-delivered close event doesn't
+            # re-stamp the row or fire a second postmortem.
+            res = await conn.execute(
                 """
                 UPDATE trade_intents
                 SET realized_pnl_usd = $2,
                     exit_reason = $3,
                     closed_at = now()
-                WHERE id = $1
+                WHERE id = $1 AND closed_at IS NULL
                 """,
                 intent_id,
                 ev.get("realized_pnl_usd"),
@@ -114,5 +118,10 @@ async def _on_closed(msg: Msg) -> None:
                 "intent %s closed pnl=%s reason=%s",
                 intent_id, ev.get("realized_pnl_usd"), ev.get("exit_reason"),
             )
+        # Only the delivery that actually closed the intent generates the
+        # postmortem. Run it detached — it makes an LLM call for the narrative
+        # and must not block the NATS callback.
+        if not res.endswith(" 0"):
+            asyncio.create_task(postmortem.generate(UUID(intent_id)))
     except Exception:
         log.exception("execution consumer _on_closed failed")

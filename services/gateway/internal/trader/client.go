@@ -335,20 +335,29 @@ func (c *Client) TrackContract(ctx context.Context, contractID int64, onUpdate f
 	reqID := c.nextReqID()
 
 	done := make(chan struct{})
+	loggedLimit := false
 	c.mu.Lock()
 	c.subs[reqID] = func(raw json.RawMessage) {
 		var resp struct {
 			ProposalOpenContract *struct {
-				ContractID int64   `json:"contract_id"`
-				IsSold     int     `json:"is_sold"`
-				Profit     float64 `json:"profit"`
-				Status     string  `json:"status"`
+				ContractID int64           `json:"contract_id"`
+				IsSold     int             `json:"is_sold"`
+				Profit     float64         `json:"profit"`
+				Status     string          `json:"status"`
+				LimitOrder json.RawMessage `json:"limit_order"`
 			} `json:"proposal_open_contract"`
 		}
 		if err := json.Unmarshal(raw, &resp); err != nil || resp.ProposalOpenContract == nil {
 			return
 		}
 		poc := resp.ProposalOpenContract
+		if !loggedLimit {
+			loggedLimit = true
+			c.logger.Info("open contract limit_order",
+				"contract_id", poc.ContractID,
+				"limit_order", string(poc.LimitOrder),
+				"status", poc.Status)
+		}
 		upd := ContractUpdate{
 			ContractID: poc.ContractID,
 			IsSold:     poc.IsSold == 1,

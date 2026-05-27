@@ -123,6 +123,10 @@ func (r *Router) handleApproved(ctx context.Context, data []byte) {
 	buyCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 
+	if pj, jerr := json.Marshal(params); jerr == nil {
+		r.logger.Info("submitting buy", "intent", intent.IntentID, "params", string(pj))
+	}
+
 	// For stake basis, max price = stake (we never pay more than we stake).
 	res, err := r.client.Buy(buyCtx, params, stake)
 	if err != nil {
@@ -159,10 +163,17 @@ func (r *Router) handleApproved(ctx context.Context, data []byte) {
 		if !u.IsSold {
 			return
 		}
+		// Deriv's final status is sometimes empty; infer from P&L sign when
+		// it is, so the postmortem gets a meaningful exit reason.
 		exitReason := "sold"
-		if u.Status == "won" {
+		switch {
+		case u.Status == "won":
 			exitReason = "take_profit"
-		} else if u.Status == "lost" {
+		case u.Status == "lost":
+			exitReason = "stop_loss"
+		case u.Profit > 0:
+			exitReason = "take_profit"
+		case u.Profit < 0:
 			exitReason = "stop_loss"
 		}
 		r.publishClosed(ClosedEvent{

@@ -365,6 +365,22 @@ export const api = {
       `/api/v1/companies/${companyId}/approvals/${intentId}/reject`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
+
+  // ─── postmortems ───
+  listPostmortems: (companyId: string, opts?: { agentId?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.agentId) q.set("agent_id", opts.agentId);
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return request<{ postmortems: Postmortem[] }>(
+      `/api/v1/companies/${companyId}/postmortems${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getPostmortem: (companyId: string, intentId: string) =>
+    request<Postmortem>(
+      `/api/v1/companies/${companyId}/intents/${intentId}/postmortem`,
+    ),
 };
 
 export type TradeIntentStatus =
@@ -428,6 +444,33 @@ export type TradeIntent = {
   execution_error: string | null;
   created_at: string;
   updated_at: string;
+};
+
+// ─── postmortem types ───
+
+export type EmployeeRating = {
+  direction_score: number;
+  calibration_score: number;
+  information_value_score: number | null;
+  composite_rating: number;
+};
+
+export type Postmortem = {
+  id: string;
+  intent_id: string;
+  company_id: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  asset: string | null;
+  contract_type: string | null;
+  direction: string | null;
+  outcome: "win" | "loss" | "break_even";
+  pnl_usd: number;
+  entry_trace: Record<string, unknown>;
+  exit_trace: Record<string, unknown>;
+  employee_rating: EmployeeRating;
+  narrative: string;
+  generated_at: string;
 };
 
 // ─── LLM model + payroll types ───

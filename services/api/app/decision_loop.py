@@ -192,6 +192,33 @@ class DecisionLoop:
             f"Stake sized via Kelly {kelly:.2f} × allocation × confidence."
         )
 
+        # Snapshot the decision inputs so the postmortem is accurate even if
+        # the agent is reconfigured later (PLAN §13.11 entry trace).
+        entry_context = {
+            "agent": {
+                "name": agent["name"],
+                "personality": agent["personality"],
+                "strategies": strategies,
+                "kelly_fraction": kelly,
+                "min_confidence_threshold": float(agent["min_confidence_threshold"]),
+                "min_payoff_ratio": payoff,
+                "allocated_balance_usd": allocation,
+            },
+            "forecast": {
+                "model": fc.get("model"),
+                "asof_ts": int(fc["asof_ts"]),
+                "direction": direction,
+                "confidence": confidence,
+                "last_price": last_price,
+                "horizon_steps": fc.get("horizon_steps"),
+            },
+            "sizing": {
+                "method": "fractional_kelly_x_confidence",
+                "proposed_stake_usd": round(proposed, 4),
+                "multiplier": multiplier,
+            },
+        }
+
         async with acquire() as conn:
             async with conn.transaction():
                 verdict = await risk_evaluate(
@@ -243,14 +270,14 @@ class DecisionLoop:
                         entry_price, stop_loss, take_profit,
                         source_model, source_asof_ts, confidence,
                         expected_payoff_ratio, expected_value_usd, rationale,
-                        status, risk_verdict, expires_at
+                        status, risk_verdict, expires_at, entry_context
                     )
                     VALUES ($1, $2, $3, $4, $5,
                             $6, $7, $8,
                             $9, $10, $11,
                             $12, $13, $14,
                             $15, $16, $17,
-                            $18, $19::jsonb, $20)
+                            $18, $19::jsonb, $20, $21::jsonb)
                     RETURNING id
                     """,
                     agent["company_id"], agent["id"],
@@ -260,6 +287,7 @@ class DecisionLoop:
                     fc.get("model"), asof_ts, confidence,
                     payoff, ev, rationale,
                     status, json.dumps(verdict.as_jsonb()), expires_at,
+                    json.dumps(entry_context),
                 )
                 log.info(
                     "intent %s · %s %s %s stake=%.2f conf=%.2f → %s",

@@ -56,6 +56,12 @@ export default function Nav() {
             >
               Approvals
             </Link>
+            <Link
+              href="/postmortems"
+              className="hidden text-sm text-text-dim hover:text-text sm:inline"
+            >
+              Postmortems
+            </Link>
 
             <div className="relative ml-3">
               <button
