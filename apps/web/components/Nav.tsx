@@ -32,6 +32,18 @@ export default function Nav() {
             >
               Agents
             </Link>
+            <Link
+              href="/tiers"
+              className="hidden text-sm text-text-dim hover:text-text sm:inline"
+            >
+              Tiers
+            </Link>
+            <Link
+              href="/members"
+              className="hidden text-sm text-text-dim hover:text-text sm:inline"
+            >
+              Members
+            </Link>
 
             <div className="relative ml-3">
               <button
