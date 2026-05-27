@@ -12,6 +12,7 @@ from app.routes import agents as agents_routes
 from app.routes import auth as auth_routes
 from app.routes import companies as companies_routes
 from app.routes import me as me_routes
+from app.routes import symbols as symbols_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,3 +60,4 @@ app.include_router(me_routes.router, prefix="/api/v1")
 app.include_router(companies_routes.router, prefix="/api/v1")
 app.include_router(agents_routes.router, prefix="/api/v1")
 app.include_router(agents_routes.personality_router, prefix="/api/v1")
+app.include_router(symbols_routes.router, prefix="/api/v1")

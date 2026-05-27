@@ -10,6 +10,8 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 
+import { api } from "@/lib/api";
+
 type TickPayload = {
   symbol: string;
   quote: number;
@@ -37,14 +39,14 @@ type ServerMessage =
   | { type: "tick"; seq: number; ts_ms: number; payload: TickPayload }
   | { type: "forecast"; seq: number; ts_ms: number; payload: ForecastPayload };
 
-type Props = { symbol: string; wsUrl: string };
+type Props = {
+  symbol: string;
+  wsUrl: string;
+  decimals?: number;
+  displayName?: string;
+};
 
-const FMT = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 4,
-  maximumFractionDigits: 4,
-});
-
-export default function TickChart({ symbol, wsUrl }: Props) {
+export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const tickSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -52,14 +54,23 @@ export default function TickChart({ symbol, wsUrl }: Props) {
   const p10SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const p90SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lastEpochRef = useRef<number>(0);
+  // Track the symbol the live socket is rendering. If it changes, we ignore
+  // any in-flight messages that beat the unmount.
+  const symbolRef = useRef(symbol);
 
   const [latest, setLatest] = useState<TickPayload | null>(null);
   const [prev, setPrev] = useState<TickPayload | null>(null);
   const [forecast, setForecast] = useState<ForecastPayload | null>(null);
   const [connected, setConnected] = useState(false);
   const [tickCount, setTickCount] = useState(0);
+  const [historyRows, setHistoryRows] = useState<number | null>(null);
 
-  // Init chart + series
+  const fmt = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+
+  // Init chart + series once
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -79,7 +90,7 @@ export default function TickChart({ symbol, wsUrl }: Props) {
         borderColor: "#1F2937",
         timeVisible: true,
         secondsVisible: true,
-        rightOffset: 24,         // leave room for forward forecast
+        rightOffset: 24,
         barSpacing: 4,
       },
       width: containerRef.current.clientWidth,
@@ -97,9 +108,6 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       priceLineStyle: 2,
       lastValueVisible: true,
     });
-
-    // Forecast band: two thin lines + a translucent fill between them via
-    // AreaSeries on p90 with a lower-bound trick.
     const p90 = chart.addSeries(LineSeries, {
       color: "rgba(168, 255, 53, 0.55)",
       lineWidth: 1,
@@ -117,7 +125,7 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       crosshairMarkerVisible: false,
     });
     const p50 = chart.addSeries(LineSeries, {
-      color: "#FBBF24",          // amber for prediction
+      color: "#FBBF24",
       lineWidth: 2,
       lineStyle: 1,
       lastValueVisible: false,
@@ -149,7 +157,51 @@ export default function TickChart({ symbol, wsUrl }: Props) {
     };
   }, []);
 
-  // WebSocket connection
+  // Symbol change → reset state, load history, reset series
+  useEffect(() => {
+    symbolRef.current = symbol;
+    lastEpochRef.current = 0;
+    setLatest(null);
+    setPrev(null);
+    setForecast(null);
+    setTickCount(0);
+    setHistoryRows(null);
+
+    // Clear forecast series; history below replaces tick series.
+    p50SeriesRef.current?.setData([]);
+    p10SeriesRef.current?.setData([]);
+    p90SeriesRef.current?.setData([]);
+
+    let cancelled = false;
+    api
+      .symbolHistory(symbol, 30, 1)
+      .then((r) => {
+        if (cancelled || symbolRef.current !== symbol) return;
+        const lines: LineData[] = r.rows.map((row) => ({
+          time: row.t as UTCTimestamp,
+          value: row.value,
+        }));
+        tickSeriesRef.current?.setData(lines);
+        if (lines.length) {
+          lastEpochRef.current = lines[lines.length - 1].time as number;
+          chartRef.current?.timeScale().fitContent();
+        }
+        setHistoryRows(lines.length);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          tickSeriesRef.current?.setData([]);
+          setHistoryRows(0);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  // WebSocket connection (single connection for the chart's lifetime; we
+  // filter incoming messages by `symbolRef.current`).
   useEffect(() => {
     let ws: WebSocket | null = null;
     let cancelled = false;
@@ -167,8 +219,10 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       ws.onmessage = (ev) => {
         try {
           const msg: ServerMessage = JSON.parse(ev.data);
+          const activeSymbol = symbolRef.current;
+
           if (msg.type === "tick") {
-            if (msg.payload.symbol !== symbol) return;
+            if (msg.payload.symbol !== activeSymbol) return;
             let t = msg.payload.epoch;
             if (t <= lastEpochRef.current) t = lastEpochRef.current + 1;
             lastEpochRef.current = t;
@@ -180,11 +234,8 @@ export default function TickChart({ symbol, wsUrl }: Props) {
             setLatest(msg.payload);
             setTickCount((n) => n + 1);
           } else if (msg.type === "forecast") {
-            if (msg.payload.asset !== symbol) return;
-            // Render forecast lines extending right from "now".
+            if (msg.payload.asset !== activeSymbol) return;
             const fcast = msg.payload.forecast;
-            // Anchor the forecast at the price at asof so the lines visually
-            // continue from the current quote rather than jumping.
             const anchorTime = msg.payload.asof_ts;
             const anchorPrice = msg.payload.last_price;
             const p50Data: LineData[] = [
@@ -226,7 +277,7 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       ws?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl, symbol]);
+  }, [wsUrl]);
 
   const delta = latest && prev ? latest.quote - prev.quote : null;
   const deltaColor =
@@ -238,12 +289,12 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-widest text-text-mute">
-            {symbol} · live
+            {displayName ?? symbol} · live
           </div>
           <div className="num mt-1 flex items-baseline gap-3 text-4xl font-medium">
-            <span>{latest ? FMT.format(latest.quote) : "—"}</span>
+            <span>{latest ? fmt.format(latest.quote) : "—"}</span>
             <span className={`text-base ${deltaColor}`}>
-              {deltaGlyph} {delta != null ? FMT.format(Math.abs(delta)) : "0.0000"}
+              {deltaGlyph} {delta != null ? fmt.format(Math.abs(delta)) : "0.0000"}
             </span>
           </div>
         </div>
@@ -251,7 +302,9 @@ export default function TickChart({ symbol, wsUrl }: Props) {
           <div className={connected ? "text-bull" : "text-bear"}>
             {connected ? "● connected" : "○ disconnected"}
           </div>
-          <div className="num mt-1 text-text-mute">{tickCount} ticks</div>
+          <div className="num mt-1 text-text-mute">
+            {tickCount} ticks{historyRows != null ? ` · ${historyRows} backfill` : ""}
+          </div>
         </div>
       </div>
 
@@ -260,11 +313,11 @@ export default function TickChart({ symbol, wsUrl }: Props) {
       <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
         <Stat
           label="Bid"
-          value={latest?.bid != null ? FMT.format(latest.bid) : "—"}
+          value={latest?.bid != null ? fmt.format(latest.bid) : "—"}
         />
         <Stat
           label="Ask"
-          value={latest?.ask != null ? FMT.format(latest.ask) : "—"}
+          value={latest?.ask != null ? fmt.format(latest.ask) : "—"}
         />
         <Stat
           label="Epoch"
@@ -311,7 +364,9 @@ function ForecastStat({ forecast }: { forecast: ForecastPayload | null }) {
         <span className="num text-text-mute">{forecast.latency_ms.toFixed(0)}ms</span>
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <span className={`num text-sm ${dirColor}`}>{glyph} {dir}</span>
+        <span className={`num text-sm ${dirColor}`}>
+          {glyph} {dir}
+        </span>
         <span className="num text-xs text-text-mute">
           conf {(forecast.confidence_score * 100).toFixed(0)}%
         </span>

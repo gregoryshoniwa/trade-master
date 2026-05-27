@@ -58,6 +58,19 @@ async function request<T>(
   return body as T;
 }
 
+export type AssetClass = "synthetic" | "forex" | "commodity" | "crypto" | "stock_index";
+
+export type SymbolDef = {
+  code: string;
+  display: string;
+  asset_class: AssetClass;
+  tier: number;
+  decimals: number;
+  description: string;
+};
+
+export type HistoryRow = { t: number; value: number };
+
 export type AgentRole = "manager" | "employee" | "research";
 export type Personality = "sniper" | "scalper" | "hunter" | "guardian" | "balanced" | "custom";
 export type TradeMode = "autonomous" | "approve_each" | "approve_above_threshold";
@@ -205,4 +218,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+
+  // ─── symbols + history ───
+  listSymbols: () =>
+    request<{ symbols: SymbolDef[] }>("/api/v1/symbols"),
+
+  symbolHistory: (symbol: string, minutes = 30, bucketSecs = 1) =>
+    request<{ symbol: string; bucket_secs: number; rows: HistoryRow[] }>(
+      `/api/v1/symbols/${encodeURIComponent(symbol)}/history?minutes=${minutes}&bucket_secs=${bucketSecs}`,
+    ),
 };

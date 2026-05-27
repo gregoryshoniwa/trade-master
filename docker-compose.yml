@@ -106,9 +106,14 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
       NATS_URL: nats://nats:4222
       REDIS_URL: redis://redis:6379/0
+      QUESTDB_HTTP_URL: http://questdb:9000
       AUTH_SECRET: ${AUTH_SECRET:-dev_change_me_to_a_long_random_string}
       JWT_ISSUER: ${JWT_ISSUER:-trademaster-local}
       CORS_ORIGINS: "http://localhost:3000"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     ports:
       - "8000:8000"
 
