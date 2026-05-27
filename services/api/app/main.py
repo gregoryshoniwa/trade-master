@@ -13,6 +13,7 @@ from app.routes import auth as auth_routes
 from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
 from app.routes import me as me_routes
+from app.routes import members as members_routes
 from app.routes import symbols as symbols_routes
 
 logging.basicConfig(
@@ -63,3 +64,4 @@ app.include_router(agents_routes.router, prefix="/api/v1")
 app.include_router(agents_routes.personality_router, prefix="/api/v1")
 app.include_router(symbols_routes.router, prefix="/api/v1")
 app.include_router(chat_routes.router, prefix="/api/v1")
+app.include_router(members_routes.router, prefix="/api/v1")

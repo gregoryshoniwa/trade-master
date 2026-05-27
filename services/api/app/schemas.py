@@ -9,28 +9,42 @@ from pydantic import BaseModel, EmailStr, Field
 # ───────────────────────── auth ─────────────────────────
 
 
-class MagicLinkRequest(BaseModel):
+class SignupRequest(BaseModel):
     email: EmailStr
-    full_name: str | None = Field(default=None, max_length=120)
+    password: str = Field(min_length=10, max_length=200)
+    full_name: str = Field(min_length=1, max_length=120)
+    jurisdiction: str = Field(default="ZW", max_length=2, min_length=2)
+    # If provided, immediately create a Company and make the user its
+    # owner+CEO. If omitted, the user can create one later.
+    company_name: str | None = Field(default=None, min_length=2, max_length=80)
 
 
-class MagicLinkResponse(BaseModel):
-    sent: bool
-    # Dev convenience: we return the link in the response so the frontend
-    # can show "click here to log in" without an email provider wired up.
-    # Phase 4+ removes this and ships via Resend.
-    dev_link: str | None = None
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=200)
 
 
-class VerifyRequest(BaseModel):
-    token: str
-
-
-class VerifyResponse(BaseModel):
+class AuthResponse(BaseModel):
     account_id: UUID
     email: EmailStr
     full_name: str | None
-    is_new: bool
+    is_new_account: bool = False
+    company_id: UUID | None = None  # populated on signup + invite-accept
+
+
+class InvitePeekResponse(BaseModel):
+    email: EmailStr
+    company_id: UUID
+    company_name: str
+    role: str
+    title: str | None
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    # Both optional — required only for first-time signup via invite.
+    password: str | None = Field(default=None, min_length=10, max_length=200)
+    full_name: str | None = Field(default=None, max_length=120)
 
 
 # ───────────────────────── me ─────────────────────────
@@ -72,6 +86,43 @@ class CompanyList(BaseModel):
 
 class SwitchCompanyRequest(BaseModel):
     company_id: UUID
+
+
+# ─────────────────────── company members ──────────────────────
+
+
+class CompanyMember(BaseModel):
+    account_id: UUID
+    email: EmailStr
+    full_name: str | None
+    role: str  # owner | admin | trader | viewer
+    title: str | None
+    joined_at: datetime
+
+
+class CompanyMemberList(BaseModel):
+    members: list[CompanyMember]
+
+
+class InviteCreate(BaseModel):
+    email: EmailStr
+    role: str = Field(pattern=r"^(admin|trader|viewer)$")
+    title: str | None = Field(default=None, max_length=120)
+
+
+class InviteCreated(BaseModel):
+    invite_id: UUID
+    email: EmailStr
+    role: str
+    title: str | None
+    expires_at: datetime
+    # Dev convenience until Resend is wired (PLAN §33.5)
+    accept_url: str
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role: str = Field(pattern=r"^(owner|admin|trader|viewer)$")
+    title: str | None = Field(default=None, max_length=120)
 
 
 # ─────────────────────── personalities ──────────────────────
