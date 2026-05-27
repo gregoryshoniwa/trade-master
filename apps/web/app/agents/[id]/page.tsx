@@ -181,6 +181,15 @@ export default function AgentDetailPage() {
         </div>
       </header>
 
+      <div className="mb-4 flex gap-2">
+        <Link
+          href={`/agents/${agent.id}/chat`}
+          className="rounded-md bg-bull px-3 py-1.5 text-sm font-medium text-bg hover:opacity-90"
+        >
+          💬 Chat with {agent.name}
+        </Link>
+      </div>
+
       <div className="space-y-6">
         <Section title="Identity">
           <Field label="Name">

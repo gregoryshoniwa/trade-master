@@ -227,4 +227,59 @@ export const api = {
     request<{ symbol: string; bucket_secs: number; rows: HistoryRow[] }>(
       `/api/v1/symbols/${encodeURIComponent(symbol)}/history?minutes=${minutes}&bucket_secs=${bucketSecs}`,
     ),
+
+  // ─── chat ───
+  listConversations: (companyId: string, agentId: string) =>
+    request<{ conversations: Conversation[] }>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/conversations`,
+    ),
+
+  getMessages: (companyId: string, agentId: string, conversationId: string) =>
+    request<{ messages: ChatMessage[] }>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/conversations/${conversationId}/messages`,
+    ),
+
+  sendChat: (
+    companyId: string,
+    agentId: string,
+    body: { message: string; conversation_id?: string },
+  ) =>
+    request<ChatResponse>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/chat`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+};
+
+// ─── chat types ───
+
+export type Conversation = {
+  id: string;
+  agent_id: string;
+  title: string | null;
+  last_message_at: string | null;
+  created_at: string;
+};
+
+export type ChatToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  tool_calls: ChatToolCall[] | null;
+  created_at: string;
+};
+
+export type ChatResponse = {
+  conversation_id: string;
+  user_message: ChatMessage;
+  assistant_message: ChatMessage;
+  tool_calls: ChatToolCall[];
+  input_tokens: number;
+  output_tokens: number;
+  model: string;
 };
