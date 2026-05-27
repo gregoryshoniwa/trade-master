@@ -10,7 +10,8 @@ WORKDIR /app
 # Install deps in a venv at /app/.venv. uv handles lock + sync.
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    UV_HTTP_TIMEOUT=600
 
 COPY pyproject.toml uv.lock* ./
 
