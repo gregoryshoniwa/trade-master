@@ -1,0 +1,275 @@
+"""Agent decision loop.
+
+Subscribes to NATS `signals.>` (TSFM forecasts). For each forecast,
+matches every active+unpaused agent in every Company that:
+  - has the forecast's asset allowed (empty = any)
+  - declares a strategy compatible with the forecast direction
+  - sees confidence ≥ its `min_confidence_threshold`
+
+For each match we synthesize a TradeIntent (direction → MULTUP/MULTDOWN,
+stake by Kelly + caps, stop = entry × (1 − 0.5%), target = stop × payoff
+ratio), run it through the deterministic Risk Agent, persist, and mark
+status:
+
+  pending_approval     trade_mode = approve_each  (default)
+  auto_approved        trade_mode = autonomous
+  approve_above_threshold → auto for stake < $X, else pending_approval
+
+This is the single most important plumbing piece in Phase 1 — it
+takes the system from "agents that chat" to "agents that act".
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from typing import Any
+from uuid import UUID
+
+import asyncpg
+import nats
+from nats.aio.msg import Msg
+
+from app.db import acquire, pool
+from app.risk import evaluate as risk_evaluate
+
+log = logging.getLogger("trademaster.decision")
+
+# Phase 1 trading constants — moved to per-Company config later.
+DEFAULT_STOP_PCT = 0.005       # 0.5% stop
+APPROVE_WINDOW_SECS = 30
+APPROVE_THRESHOLD_USD = 10.0   # for approve_above_threshold mode
+
+# Strategy → forecast direction compatibility. Simplified Phase 1 rules
+# (PLAN §4 explains each more fully).
+STRATEGY_DIRECTION_OK: dict[str, set[str]] = {
+    "trend_following":    {"up", "down"},
+    "breakout":           {"up", "down"},
+    "support_resistance": {"up", "down"},
+    "mean_reversion":     {"up", "down"},
+    "price_action":       {"up", "down"},
+}
+
+
+class DecisionLoop:
+    def __init__(self, nats_url: str | None = None):
+        self.nats_url = nats_url or os.getenv("NATS_URL", "nats://nats:4222")
+        self._nc: nats.NATS | None = None
+        self._sub: Any | None = None
+        self._stop = asyncio.Event()
+
+    async def start(self) -> None:
+        try:
+            self._nc = await nats.connect(
+                self.nats_url,
+                name="trademaster-api-decision",
+                reconnect_time_wait=2,
+                max_reconnect_attempts=-1,
+            )
+            log.info("decision loop connected to nats url=%s", self.nats_url)
+            self._sub = await self._nc.subscribe("signals.>", cb=self._on_signal)
+            log.info("decision loop subscribed to signals.>")
+        except Exception:
+            log.exception("decision loop failed to start (chat still works)")
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._sub is not None:
+            try:
+                await self._sub.unsubscribe()
+            except Exception:
+                pass
+        if self._nc is not None:
+            try:
+                await self._nc.drain()
+            except Exception:
+                pass
+
+    async def _on_signal(self, msg: Msg) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        # We currently only act on TTM. Other models will be added as we
+        # decide what they're for (and the ensemble layer arrives).
+        if payload.get("model") not in {"ttm-granite-r2"}:
+            return
+
+        try:
+            await self._evaluate_forecast(payload)
+        except Exception:
+            log.exception("decision loop _evaluate_forecast failed")
+
+    async def _evaluate_forecast(self, fc: dict[str, Any]) -> None:
+        asset = fc.get("asset")
+        direction = fc.get("point_direction")
+        confidence = float(fc.get("confidence_score") or 0.0)
+        last_price = float(fc.get("last_price") or 0.0)
+        if not asset or direction not in {"up", "down"} or last_price <= 0:
+            return
+
+        async with acquire() as conn:
+            # Match candidates across ALL companies. Each row carries its
+            # company_id so we persist intents correctly. Filter on the
+            # cheap conditions in SQL; finer rules run per-row below.
+            rows = await conn.fetch(
+                """
+                SELECT a.id, a.company_id, a.name, a.role, a.personality,
+                       a.strategies, a.allowed_assets,
+                       a.min_confidence_threshold, a.kelly_fraction,
+                       a.min_payoff_ratio, a.max_position_size_usd,
+                       a.allocated_balance_usd, a.trade_mode,
+                       a.is_active, a.is_paused, a.target_holding_secs
+                FROM agents a
+                WHERE a.role = 'employee'
+                  AND a.is_active = TRUE
+                  AND a.is_paused = FALSE
+                  AND $1 >= a.min_confidence_threshold
+                """,
+                confidence,
+            )
+
+        for r in rows:
+            try:
+                await self._maybe_intent(r, fc, direction, confidence, last_price, asset)
+            except Exception:
+                log.exception("intent generation failed agent=%s", r["id"])
+
+    async def _maybe_intent(
+        self,
+        agent: asyncpg.Record,
+        fc: dict[str, Any],
+        direction: str,
+        confidence: float,
+        last_price: float,
+        asset: str,
+    ) -> None:
+        # Asset whitelist on the agent
+        if list(agent["allowed_assets"] or []) and asset not in agent["allowed_assets"]:
+            return
+        # Strategy must be compatible with this direction
+        strategies = list(agent["strategies"] or [])
+        if not any(direction in STRATEGY_DIRECTION_OK.get(s, set()) for s in strategies):
+            return
+
+        # Stake sizing: fractional Kelly applied to allocation, capped
+        # by the agent's per-position cap. Conservative for Phase 1 —
+        # we'll replace with a proper Kelly-from-edge calculation
+        # once we have win-rate priors from real trade outcomes.
+        kelly = float(agent["kelly_fraction"])
+        allocation = float(agent["allocated_balance_usd"])
+        proposed = max(1.0, allocation * kelly * confidence)
+
+        # Contract type: simple Phase 1 mapping. Tier-aware contract
+        # selection comes when we have per-asset contract registry.
+        contract_type = "MULTUP" if direction == "up" else "MULTDOWN"
+
+        # Stop / target. 0.5% stop; target = stop × payoff_ratio.
+        payoff = float(agent["min_payoff_ratio"])
+        stop_pct = DEFAULT_STOP_PCT
+        if direction == "up":
+            stop = last_price * (1.0 - stop_pct)
+            target = last_price * (1.0 + stop_pct * payoff)
+        else:
+            stop = last_price * (1.0 + stop_pct)
+            target = last_price * (1.0 - stop_pct * payoff)
+
+        duration_secs = int(agent["target_holding_secs"] or 600)
+
+        rationale = (
+            f"{agent['name']} ({', '.join(strategies)}): TTM says {direction} "
+            f"with confidence {confidence:.2f} (floor {float(agent['min_confidence_threshold']):.2f}). "
+            f"Stake sized via Kelly {kelly:.2f} × allocation × confidence."
+        )
+
+        async with acquire() as conn:
+            async with conn.transaction():
+                verdict = await risk_evaluate(
+                    conn,
+                    company_id=agent["company_id"],
+                    agent_id=agent["id"],
+                    asset=asset,
+                    contract_type=contract_type,
+                    proposed_stake_usd=proposed,
+                    confidence=confidence,
+                    stop_loss=stop,
+                )
+
+                stake = verdict.applied_stake_usd or proposed
+                # Status routing per trade_mode
+                trade_mode = agent["trade_mode"]
+                if not verdict.ok:
+                    status = "rejected_by_risk"
+                    expires_at = None
+                elif trade_mode == "autonomous":
+                    status = "auto_approved"
+                    expires_at = None
+                elif trade_mode == "approve_above_threshold":
+                    if stake < APPROVE_THRESHOLD_USD:
+                        status = "auto_approved"
+                        expires_at = None
+                    else:
+                        status = "pending_approval"
+                        expires_at = await conn.fetchval(
+                            "SELECT now() + make_interval(secs => $1)",
+                            APPROVE_WINDOW_SECS,
+                        )
+                else:  # approve_each (default)
+                    status = "pending_approval"
+                    expires_at = await conn.fetchval(
+                        "SELECT now() + interval '%s seconds'" % APPROVE_WINDOW_SECS
+                    )
+
+                ev = float(confidence) * stake * (payoff - 1)
+                from datetime import datetime, timezone
+                asof_ts = datetime.fromtimestamp(int(fc["asof_ts"]), tz=timezone.utc)
+
+                await conn.execute(
+                    """
+                    INSERT INTO trade_intents (
+                        company_id, agent_id,
+                        asset, contract_type, direction,
+                        stake_usd, multiplier, duration_secs,
+                        entry_price, stop_loss, take_profit,
+                        source_model, source_asof_ts, confidence,
+                        expected_payoff_ratio, expected_value_usd, rationale,
+                        status, risk_verdict, expires_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5,
+                            $6, $7, $8,
+                            $9, $10, $11,
+                            $12, $13, $14,
+                            $15, $16, $17,
+                            $18, $19::jsonb, $20)
+                    """,
+                    agent["company_id"], agent["id"],
+                    asset, contract_type, direction,
+                    stake, 10, duration_secs,
+                    last_price, stop, target,
+                    fc.get("model"), asof_ts, confidence,
+                    payoff, ev, rationale,
+                    status, json.dumps(verdict.as_jsonb()), expires_at,
+                )
+                log.info(
+                    "intent %s · %s %s %s stake=%.2f conf=%.2f → %s",
+                    agent["name"], asset, contract_type, direction,
+                    stake, confidence, status,
+                )
+
+
+# Module-level singleton — owned by the FastAPI lifespan in main.py.
+decision_loop: DecisionLoop | None = None
+
+
+async def start_decision_loop() -> None:
+    global decision_loop
+    if decision_loop is None:
+        decision_loop = DecisionLoop()
+    await decision_loop.start()
+
+
+async def stop_decision_loop() -> None:
+    if decision_loop is not None:
+        await decision_loop.stop()

@@ -8,7 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, init_pool
+from app.decision_loop import start_decision_loop, stop_decision_loop
 from app.routes import agents as agents_routes
+from app.routes import approvals as approvals_routes
 from app.routes import auth as auth_routes
 from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
@@ -29,9 +31,14 @@ log = logging.getLogger("trademaster.api")
 async def lifespan(_: FastAPI):
     await init_pool()
     log.info("db pool ready")
+    # Decision loop subscribes to NATS signals.> in the background.
+    # Failures inside its start() don't bubble up — chat must still work
+    # even if the decision pipeline is down.
+    await start_decision_loop()
     try:
         yield
     finally:
+        await stop_decision_loop()
         await close_pool()
 
 
@@ -69,3 +76,4 @@ app.include_router(chat_routes.router, prefix="/api/v1")
 app.include_router(members_routes.router, prefix="/api/v1")
 app.include_router(llm_models_routes.router, prefix="/api/v1")
 app.include_router(payroll_routes.router, prefix="/api/v1")
+app.include_router(approvals_routes.router, prefix="/api/v1")
