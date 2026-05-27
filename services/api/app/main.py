@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import bus, execution
 from app.config import settings
 from app.db import close_pool, init_pool
 from app.decision_loop import start_decision_loop, stop_decision_loop
@@ -31,14 +32,18 @@ log = logging.getLogger("trademaster.api")
 async def lifespan(_: FastAPI):
     await init_pool()
     log.info("db pool ready")
-    # Decision loop subscribes to NATS signals.> in the background.
-    # Failures inside its start() don't bubble up — chat must still work
-    # even if the decision pipeline is down.
+    # Shared NATS connection first — decision loop + execution consumer
+    # both ride on it. All three start() calls are best-effort; chat must
+    # still work even if the trading pipeline is down.
+    await bus.connect()
     await start_decision_loop()
+    await execution.start()
     try:
         yield
     finally:
+        await execution.stop()
         await stop_decision_loop()
+        await bus.close()
         await close_pool()
 
 

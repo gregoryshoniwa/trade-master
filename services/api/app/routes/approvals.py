@@ -10,6 +10,7 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app import bus
 from app.auth import CurrentAccount
 from app.db import acquire
 
@@ -50,6 +51,12 @@ class TradeIntent(BaseModel):
     expires_at: datetime | None
     executed_at: datetime | None
     broker_contract_id: str | None
+    buy_price_usd: float | None
+    longcode: str | None
+    realized_pnl_usd: float | None
+    exit_reason: str | None
+    closed_at: datetime | None
+    execution_error: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -109,6 +116,12 @@ def _row(r: asyncpg.Record) -> TradeIntent:
         expires_at=r["expires_at"],
         executed_at=r["executed_at"],
         broker_contract_id=r["broker_contract_id"],
+        buy_price_usd=float(r["buy_price_usd"]) if r["buy_price_usd"] is not None else None,
+        longcode=r["longcode"],
+        realized_pnl_usd=float(r["realized_pnl_usd"]) if r["realized_pnl_usd"] is not None else None,
+        exit_reason=r["exit_reason"],
+        closed_at=r["closed_at"],
+        execution_error=r["execution_error"],
         created_at=r["created_at"],
         updated_at=r["updated_at"],
     )
@@ -222,6 +235,9 @@ async def approve_intent(
                     status.HTTP_409_CONFLICT,
                     "intent not pending (already decided or expired)",
                 )
+            # Hand off to the order router (inside the txn so we only publish
+            # if the approve actually took).
+            await bus.publish_approved_intent(conn, intent_id)
             full = await conn.fetchrow(
                 """
                 SELECT i.*, a.name AS agent_name

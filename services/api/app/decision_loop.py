@@ -32,7 +32,8 @@ import asyncpg
 import nats
 from nats.aio.msg import Msg
 
-from app.db import acquire, pool
+from app import bus
+from app.db import acquire
 from app.risk import evaluate as risk_evaluate
 
 log = logging.getLogger("trademaster.decision")
@@ -41,6 +42,18 @@ log = logging.getLogger("trademaster.decision")
 DEFAULT_STOP_PCT = 0.005       # 0.5% stop
 APPROVE_WINDOW_SECS = 30
 APPROVE_THRESHOLD_USD = 10.0   # for approve_above_threshold mode
+
+# Deriv multipliers are symbol-specific. We pick the SMALLEST valid value
+# per symbol (least leverage — safest for Phase 1 demo). The proper fix is
+# querying Deriv `contracts_for` at startup; this static map covers our
+# Phase 1 catalog. Unknown symbols fall back to DEFAULT_MULTIPLIER.
+SYMBOL_MULTIPLIER: dict[str, int] = {
+    "R_10": 100, "R_25": 100, "R_50": 50, "R_75": 50, "R_100": 50,
+    "1HZ10V": 100, "1HZ25V": 100, "1HZ50V": 50, "1HZ75V": 50, "1HZ100V": 100,
+    "frxEURUSD": 50, "frxGBPUSD": 50, "frxUSDJPY": 50, "frxXAUUSD": 50,
+    "cryBTCUSD": 100, "cryETHUSD": 100,
+}
+DEFAULT_MULTIPLIER = 50
 
 # Strategy → forecast direction compatibility. Simplified Phase 1 rules
 # (PLAN §4 explains each more fully).
@@ -61,29 +74,23 @@ class DecisionLoop:
         self._stop = asyncio.Event()
 
     async def start(self) -> None:
+        # Use the shared api NATS connection (bus). It's connected by the
+        # lifespan before we start.
+        nc = bus.nc()
+        if nc is None:
+            log.warning("decision loop: no shared nats connection; disabled")
+            return
         try:
-            self._nc = await nats.connect(
-                self.nats_url,
-                name="trademaster-api-decision",
-                reconnect_time_wait=2,
-                max_reconnect_attempts=-1,
-            )
-            log.info("decision loop connected to nats url=%s", self.nats_url)
-            self._sub = await self._nc.subscribe("signals.>", cb=self._on_signal)
+            self._sub = await nc.subscribe("signals.>", cb=self._on_signal)
             log.info("decision loop subscribed to signals.>")
         except Exception:
-            log.exception("decision loop failed to start (chat still works)")
+            log.exception("decision loop failed to subscribe (chat still works)")
 
     async def stop(self) -> None:
         self._stop.set()
         if self._sub is not None:
             try:
                 await self._sub.unsubscribe()
-            except Exception:
-                pass
-        if self._nc is not None:
-            try:
-                await self._nc.drain()
             except Exception:
                 pass
 
@@ -165,6 +172,7 @@ class DecisionLoop:
         # Contract type: simple Phase 1 mapping. Tier-aware contract
         # selection comes when we have per-asset contract registry.
         contract_type = "MULTUP" if direction == "up" else "MULTDOWN"
+        multiplier = SYMBOL_MULTIPLIER.get(asset, DEFAULT_MULTIPLIER)
 
         # Stop / target. 0.5% stop; target = stop × payoff_ratio.
         payoff = float(agent["min_payoff_ratio"])
@@ -226,7 +234,7 @@ class DecisionLoop:
                 from datetime import datetime, timezone
                 asof_ts = datetime.fromtimestamp(int(fc["asof_ts"]), tz=timezone.utc)
 
-                await conn.execute(
+                intent_id = await conn.fetchval(
                     """
                     INSERT INTO trade_intents (
                         company_id, agent_id,
@@ -243,10 +251,11 @@ class DecisionLoop:
                             $12, $13, $14,
                             $15, $16, $17,
                             $18, $19::jsonb, $20)
+                    RETURNING id
                     """,
                     agent["company_id"], agent["id"],
                     asset, contract_type, direction,
-                    stake, 10, duration_secs,
+                    stake, multiplier, duration_secs,
                     last_price, stop, target,
                     fc.get("model"), asof_ts, confidence,
                     payoff, ev, rationale,
@@ -257,6 +266,11 @@ class DecisionLoop:
                     agent["name"], asset, contract_type, direction,
                     stake, confidence, status,
                 )
+
+                # Autonomous-mode intents skip the approval queue — publish
+                # straight to the order router.
+                if status == "auto_approved":
+                    await bus.publish_approved_intent(conn, intent_id)
 
 
 # Module-level singleton — owned by the FastAPI lifespan in main.py.
