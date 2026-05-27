@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
 import { api, ApiError, type Agent, type Personality, type TradeMode } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -25,6 +26,8 @@ export default function AgentDetailPage() {
   const [tradeMode, setTradeMode] = useState<TradeMode>("approve_each");
   const [allocation, setAllocation] = useState(0);
   const [maxPos, setMaxPos] = useState(25);
+  const [llmProvider, setLlmProvider] = useState("");
+  const [llmModel, setLlmModel] = useState("");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -38,6 +41,8 @@ export default function AgentDetailPage() {
         setTradeMode(a.trade_mode);
         setAllocation(a.allocated_balance_usd);
         setMaxPos(a.max_position_size_usd);
+        setLlmProvider(a.llm_provider);
+        setLlmModel(a.llm_model);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -60,6 +65,8 @@ export default function AgentDetailPage() {
         trade_mode: tradeMode,
         allocated_balance_usd: allocation,
         max_position_size_usd: maxPos,
+        llm_provider: llmProvider,
+        llm_model: llmModel,
       });
       setAgent(updated);
       setDirty(false);
@@ -200,6 +207,17 @@ export default function AgentDetailPage() {
               className="w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-sm outline-none focus:border-bull"
             />
           </Field>
+        </Section>
+
+        <Section title="Brain (LLM)">
+          <ModelPicker
+            provider={llmProvider}
+            model={llmModel}
+            onChange={(p, m) => {
+              markDirty(setLlmProvider)(p);
+              setLlmModel(m);
+            }}
+          />
         </Section>
 
         <Section title="Personality">

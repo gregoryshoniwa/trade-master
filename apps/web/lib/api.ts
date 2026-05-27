@@ -329,6 +329,59 @@ export const api = {
       `/api/v1/companies/${companyId}/members/${accountId}`,
       { method: "DELETE" },
     ),
+
+  // ─── LLM models + payroll ───
+  listLLMModels: () =>
+    request<{ models: LLMModelDef[] }>("/api/v1/llm/models"),
+
+  payroll: (companyId: string, window: PayrollWindow = "30d") =>
+    request<PayrollSummary>(
+      `/api/v1/companies/${companyId}/payroll?window=${window}`,
+    ),
+};
+
+// ─── LLM model + payroll types ───
+
+export type LLMTier = "frontier" | "mid" | "fast" | "tiny";
+export type LLMCategory = "cloud" | "self_hosted";
+
+export type LLMModelDef = {
+  provider: string;
+  model: string;
+  label: string;
+  family: string;
+  category: LLMCategory;
+  context_window: number;
+  input_cost_per_1m_usd: number;
+  output_cost_per_1m_usd: number;
+  supports_tools: boolean;
+  tier: LLMTier;
+};
+
+export type PayrollWindow = "today" | "7d" | "30d" | "mtd" | "all";
+
+export type PayrollRow = {
+  agent_id: string | null;
+  name: string;
+  role: string | null;
+  personality: string | null;
+  provider: string;
+  model: string;
+  model_label: string | null;
+  category: LLMCategory | null;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  projected_monthly_usd: number;
+};
+
+export type PayrollSummary = {
+  window: PayrollWindow;
+  days_in_window: number;
+  total_cost_usd: number;
+  projected_monthly_usd: number;
+  rows: PayrollRow[];
 };
 
 // ─── chat types ───
