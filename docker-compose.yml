@@ -112,6 +112,26 @@ services:
     ports:
       - "8000:8000"
 
+  ttm:
+    build:
+      context: ./services/models/ttm
+      dockerfile: Dockerfile
+    container_name: tm-ttm
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: info
+      CONTEXT_LENGTH: 512
+      PREDICTION_LENGTH: 96
+      FORECAST_EVERY_SECS: 5
+    volumes:
+      - hf-cache:/cache/hf
+    ports:
+      - "8081:8081"
+
   web:
     build:
       context: ./apps/web
@@ -135,3 +155,4 @@ volumes:
   redis-data:
   nats-data:
   questdb-data:
+  hf-cache:

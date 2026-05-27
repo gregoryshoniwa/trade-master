@@ -1,0 +1,37 @@
+[project]
+name = "trademaster-model-ttm"
+version = "0.1.0"
+description = "TTM (Tiny Time Mixers) forecaster — IBM granite-timeseries-ttm-r2"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "nats-py>=2.9.0",
+    "numpy>=1.26.0,<3.0",
+    # On linux/arm64 (M1 Docker) and macOS, torch is CPU-only by default.
+    # On linux/amd64 prod we'd pin to the +cpu index — defer that to a
+    # production override.
+    "torch>=2.5.0,<2.7",
+    "granite-tsfm>=0.2.20",
+    "transformers>=4.45.0",
+    "huggingface-hub>=0.26.0",
+    "accelerate>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.7.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.uv]
+package = false
