@@ -50,10 +50,12 @@ APPROVE_THRESHOLD_USD = 10.0   # for approve_above_threshold mode
 SYMBOL_MULTIPLIER: dict[str, int] = {
     "R_10": 100, "R_25": 100, "R_50": 50, "R_75": 50, "R_100": 50,
     "1HZ10V": 100, "1HZ25V": 100, "1HZ50V": 50, "1HZ75V": 50, "1HZ100V": 100,
-    "frxEURUSD": 50, "frxGBPUSD": 50, "frxUSDJPY": 50, "frxXAUUSD": 50,
+    # Real markets (forex/commodity/crypto) all accept 100,200,300,500,800 on
+    # Deriv — verified via contracts_for. Use the smallest (least leverage).
+    "frxEURUSD": 100, "frxGBPUSD": 100, "frxUSDJPY": 100, "frxXAUUSD": 100,
     "cryBTCUSD": 100, "cryETHUSD": 100,
 }
-DEFAULT_MULTIPLIER = 50
+DEFAULT_MULTIPLIER = 100
 
 # Strategy → forecast direction compatibility. Simplified Phase 1 rules
 # (PLAN §4 explains each more fully).
