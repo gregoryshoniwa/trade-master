@@ -147,6 +147,10 @@ services:
       CONTEXT_LENGTH: 512
       PREDICTION_LENGTH: 96
       FORECAST_EVERY_SECS: 5
+      # One forecast per symbol per minute. TTM can infer every tick, but
+      # emitting a tradeable signal every 5s just spams the decision loop
+      # (and races the per-agent daily cap). 60s matches Kronos's cadence.
+      MIN_SECS_BETWEEN_FORECASTS: 60
     volumes:
       - hf-cache:/cache/hf
     # Internal port stays 8081; exposed on 18081 to avoid host conflicts.
