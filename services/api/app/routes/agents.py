@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth import CurrentAccount
 from app.db import acquire
+from app.llm import is_known as is_known_model
 from app.personalities import PRESETS, apply_preset
 from app.schemas import (
     PERSONALITIES,
@@ -124,6 +125,12 @@ async def create_agent(
 ):
     if body.personality not in PERSONALITIES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid personality")
+    if not is_known_model(body.llm_provider, body.llm_model):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"unsupported model {body.llm_provider}/{body.llm_model} — "
+            "pick one from /api/v1/llm/models",
+        )
 
     # Apply preset defaults for any fields the caller didn't provide.
     preset_vals = apply_preset(body.personality)
@@ -189,6 +196,25 @@ async def update_agent(
 ):
     if body.personality is not None and body.personality not in PERSONALITIES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid personality")
+
+    # If either provider or model is being changed, both must end up
+    # together describing a registry entry. Load current values and
+    # apply the patch in-memory before validating.
+    if body.llm_provider is not None or body.llm_model is not None:
+        async with acquire() as conn:
+            cur = await conn.fetchrow(
+                "SELECT llm_provider, llm_model FROM agents WHERE id = $1 AND company_id = $2",
+                agent_id, company_id,
+            )
+        if cur is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+        prov = body.llm_provider or cur["llm_provider"]
+        mdl = body.llm_model or cur["llm_model"]
+        if not is_known_model(prov, mdl):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"unsupported model {prov}/{mdl} — pick one from /api/v1/llm/models",
+            )
 
     fields = body.model_dump(exclude_none=True)
     if not fields:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -30,6 +31,7 @@ from app.llm import LLMMessage, ToolCall, get_adapter
 from app.memory import memory_service
 from app.personalities import PRESETS
 from app.tools import ToolContext, available_tools, execute_tool
+from app.usage import record as record_usage
 
 router = APIRouter(prefix="/companies/{company_id}/agents/{agent_id}", tags=["chat"])
 log = logging.getLogger("trademaster.chat")
@@ -393,6 +395,7 @@ async def chat(
     last_tool_calls: list[ToolCall] = []
 
     for _ in range(MAX_TOOL_TURNS):
+        t0 = time.perf_counter()
         resp = await adapter.chat(
             model=agent["llm_model"],
             system=system_prompt,
@@ -401,8 +404,24 @@ async def chat(
             max_tokens=2048,
             temperature=0.4,
         )
+        latency_ms = int((time.perf_counter() - t0) * 1000)
         total_in += resp.input_tokens
         total_out += resp.output_tokens
+
+        # Record cost for this provider call. Async-fire to keep the
+        # critical path snappy; the helper handles its own errors so a
+        # write failure never breaks chat.
+        await record_usage(
+            company_id=company_id,
+            account_id=account_id,
+            agent_id=agent_id,
+            provider=agent["llm_provider"],
+            model=agent["llm_model"],
+            input_tokens=resp.input_tokens,
+            output_tokens=resp.output_tokens,
+            latency_ms=latency_ms,
+            kind="chat",
+        )
 
         if not resp.tool_calls:
             final_text = resp.text or ""
