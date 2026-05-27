@@ -88,8 +88,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       NATS_URL: nats://nats:4222
       DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
+    # Internal port stays 8080; we expose on 18080 to avoid conflicting with
+    # other apps that bind to 8080 on the host.
     ports:
-      - "8080:8080"
+      - "18080:8080"
 
   api:
     build:
@@ -114,6 +116,13 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # mem0's huggingface embedder downloads sentence-transformers/all-MiniLM-L6-v2
+      # on first use. Cache it on a volume so subsequent rebuilds skip the download.
+      HF_HOME: /cache/hf
+      HUGGINGFACE_HUB_CACHE: /cache/hf
+      SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
+    volumes:
+      - hf-cache:/cache/hf
     ports:
       - "8000:8000"
 
@@ -134,8 +143,9 @@ services:
       FORECAST_EVERY_SECS: 5
     volumes:
       - hf-cache:/cache/hf
+    # Internal port stays 8081; exposed on 18081 to avoid host conflicts.
     ports:
-      - "8081:8081"
+      - "18081:8081"
 
   web:
     build:

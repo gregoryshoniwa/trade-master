@@ -17,20 +17,40 @@ make clean        # stop + remove volumes (destroys local data)
 
 Then open <http://localhost:3000> for the web app and watch live ticks streaming.
 
-## Current state — Phase 0 in progress
+## Host port map
+
+Host-side ports are deliberately non-default so they don't clash with other
+local apps. Internally, every service still talks to its peers on
+container-network ports via service names (no localhost involved).
+
+| Service | Host port | Container port |
+|---|---|---|
+| Web (Next.js) | 3000 | 3000 |
+| API (FastAPI) | 8000 | 8000 |
+| Gateway (Go, Deriv WSS + browser WS fan-out) | **18080** | 8080 |
+| TTM forecaster (FastAPI + ML) | **18081** | 8081 |
+| Postgres (+pgvector) | 5432 | 5432 |
+| Redis | 6379 | 6379 |
+| NATS JetStream (client / monitor) | 4222 / 8222 | 4222 / 8222 |
+| QuestDB (HTTP / ILP / PG wire) | 9000 / 9009 / 8812 | 9000 / 9009 / 8812 |
+
+The browser hits `NEXT_PUBLIC_WS_URL=ws://localhost:18080/ws/ticks` for the
+live tick + forecast stream.
+
+## Current state — Phase 0/1 in progress
 
 | Service | Status |
 |---|---|
-| Postgres (+ pgvector) | ✅ docker-compose ready |
-| Redis | ✅ docker-compose ready |
-| NATS JetStream | ✅ docker-compose ready |
-| QuestDB | ✅ docker-compose ready |
-| **gateway** (Go, Deriv WSS) | 🚧 hello-world streaming R_75 ticks |
-| api (FastAPI) | ⏳ pending Phase 0 |
-| agents (LangGraph) | ⏳ pending Phase 1 |
-| voice-bridge | ⏳ pending Phase 4 |
-| TSFM model servers | ⏳ pending Phase 1 |
-| web (Next.js) | ⏳ pending Phase 0 |
+| Postgres (+ pgvector) | ✅ schema migrated · pgvector ready for mem0 |
+| Redis | ✅ |
+| NATS JetStream | ✅ ticks.> + signals.> active |
+| QuestDB | ✅ tick history persisting · `/history` endpoint live |
+| **gateway** (Go) | ✅ Deriv WSS → NATS → browser WS fan-out (5 symbols) |
+| **api** (FastAPI) | ✅ magic-link auth, companies, agents, personalities, symbols |
+| **ttm** (TTM granite-r2) | ✅ 5 buffers · 5 forecasts/cycle on M1 CPU |
+| **web** (Next.js) | ✅ chart with TTM band, AssetPicker, agent CRUD |
+| agents (LangGraph + LLMs) | ⏳ next: chat panel + mem0 |
+| voice-bridge | ⏳ Phase 4 |
 
 ## Repository layout
 

@@ -11,7 +11,24 @@ make dev          # docker compose up + tail logs
 make gateway-logs # just the Go gateway (Deriv tick stream)
 make down         # stop everything (keep data)
 make clean        # stop + wipe volumes
+make migrate      # apply pending Postgres migrations
 ```
+
+## Host port map (non-default to avoid local conflicts)
+
+| Service | Host | Container |
+|---|---|---|
+| Web | 3000 | 3000 |
+| API | 8000 | 8000 |
+| Gateway | **18080** | 8080 |
+| TTM | **18081** | 8081 |
+| Postgres | 5432 | 5432 |
+| Redis | 6379 | 6379 |
+| NATS | 4222 (8222 mon) | same |
+| QuestDB | 9000 / 9009 / 8812 | same |
+
+Service-to-service traffic stays inside the docker network on the container
+ports — host ports only matter for the browser and external tools.
 
 Stack runs on Docker Desktop on macOS M1. **TSFM inference inside containers is CPU-only** (Docker on Mac can't pass MPS). For MPS speed, run TSFM workers natively via `make dev-mps` (not implemented yet — Phase 1).
 
