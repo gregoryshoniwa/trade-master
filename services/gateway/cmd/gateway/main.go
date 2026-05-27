@@ -60,9 +60,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// WebSocket hub — subscribes to ticks.> and fans out to browser clients.
+	// WebSocket hub — subscribes to ticks.> and signals.> and fans out to
+	// browser clients.
 	hub := ws.NewHub(logger, nc)
-	if _, err := hub.Start(ctx); err != nil {
+	if err := hub.Start(ctx); err != nil {
 		logger.Error("ws hub failed; exiting", "err", err)
 		os.Exit(1)
 	}

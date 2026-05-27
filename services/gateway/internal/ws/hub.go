@@ -48,11 +48,12 @@ func NewHub(logger *slog.Logger, nc *nats.Conn) *Hub {
 	}
 }
 
-// Start subscribes to ticks.> on NATS and pumps every received tick to all
-// connected browser clients. Returns the NATS subscription so caller can
-// unsubscribe on shutdown.
-func (h *Hub) Start(ctx context.Context) (*nats.Subscription, error) {
-	sub, err := h.nc.Subscribe("ticks.>", func(m *nats.Msg) {
+// Start subscribes to ticks.> and signals.> on NATS and pumps every event
+// to all connected browser clients under the appropriate envelope type.
+// Phase 0 broadcasts everything; per-Company / per-symbol scoping is added
+// in Phase 1+ when the WS upgrade carries auth context.
+func (h *Hub) Start(ctx context.Context) error {
+	subTicks, err := h.nc.Subscribe("ticks.>", func(m *nats.Msg) {
 		h.broadcast(ClientMessage{
 			Type:    "tick",
 			Seq:     h.seq.Add(1),
@@ -61,16 +62,31 @@ func (h *Hub) Start(ctx context.Context) (*nats.Subscription, error) {
 		})
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	h.logger.Info("ws hub subscribed", "subject", "ticks.>")
 
+	subSignals, err := h.nc.Subscribe("signals.>", func(m *nats.Msg) {
+		h.broadcast(ClientMessage{
+			Type:    "forecast",
+			Seq:     h.seq.Add(1),
+			TS:      time.Now().UnixMilli(),
+			Payload: m.Data,
+		})
+	})
+	if err != nil {
+		_ = subTicks.Unsubscribe()
+		return err
+	}
+	h.logger.Info("ws hub subscribed", "subject", "signals.>")
+
 	go func() {
 		<-ctx.Done()
-		_ = sub.Unsubscribe()
+		_ = subTicks.Unsubscribe()
+		_ = subSignals.Unsubscribe()
 	}()
 
-	return sub, nil
+	return nil
 }
 
 func (h *Hub) broadcast(msg ClientMessage) {
