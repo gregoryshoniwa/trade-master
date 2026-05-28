@@ -24,6 +24,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Agents",
     items: [
       { href: "/agents", label: "Agents", icon: <UsersIcon /> },
+      { href: "/attribution", label: "Attribution", icon: <BarChartIcon /> },
       { href: "/payroll", label: "Payroll", icon: <CoinIcon /> },
     ],
   },
@@ -174,6 +175,9 @@ function UsersIcon() {
 }
 function CoinIcon() {
   return <svg {...svgProps()}><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h6a2 2 0 1 1 0 4H10a2 2 0 1 0 0 4h6"/></svg>;
+}
+function BarChartIcon() {
+  return <svg {...svgProps()}><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
 }
 function PersonIcon() {
   return <svg {...svgProps()}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
