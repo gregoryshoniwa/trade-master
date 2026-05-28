@@ -187,6 +187,21 @@ CATALOG: list[ModelDef] = [
         input_cost_per_1m_usd=0.0, output_cost_per_1m_usd=0.0,
         tier="mid",
     ),
+    # ────────────────── Gemini Live (voice) ──────────────────
+    # The voice route records usage with kind="voice", latency_ms=session
+    # duration, and zero tokens. We expose a synthetic model row priced
+    # treating per-second duration as "input tokens" so the existing usage
+    # table + Payroll page can compute a number without a schema change.
+    # Calibration: voice route writes input_tokens = duration_seconds. At
+    # $100/1M and 1 token=1s, a 60s call ≈ $0.006 — light overcharge vs.
+    # Google's ~$0.10/min native-audio billing. Adjust as the price firms.
+    ModelDef(
+        provider="google", model="gemini-2.0-flash-live-001",
+        label="Gemini 2.0 Flash Live (voice)", family="gemini", category="cloud",
+        context_window=32_000,
+        input_cost_per_1m_usd=100.0, output_cost_per_1m_usd=0.0,
+        supports_tools=True, tier="mid",
+    ),
 ]
 
 BY_KEY: dict[tuple[str, str], ModelDef] = {(m.provider, m.model): m for m in CATALOG}

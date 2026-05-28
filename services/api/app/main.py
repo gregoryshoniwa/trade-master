@@ -28,6 +28,7 @@ from app.routes import payroll as payroll_routes
 from app.routes import postmortems as postmortems_routes
 from app.routes import safety as safety_routes
 from app.routes import symbols as symbols_routes
+from app.routes import voice as voice_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -102,3 +103,5 @@ app.include_router(calendar_routes.router, prefix="/api/v1")
 app.include_router(safety_routes.router, prefix="/api/v1")
 app.include_router(attribution_routes.router, prefix="/api/v1")
 app.include_router(deriv_routes.router, prefix="/api/v1")
+app.include_router(voice_routes.router, prefix="/api/v1")
+app.include_router(voice_routes.voices_router, prefix="/api/v1")

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import VoiceModal from "@/components/VoiceModal";
 import {
   api,
   ApiError,
@@ -27,15 +28,8 @@ export default function ChatPanel({ agent, companyId }: Props) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Voice: mic for STT, speaker toggle for TTS. Web Speech API — no extra
-  // deps, works in Chrome/Edge/Safari. In Firefox, the mic button is
-  // hidden because SpeechRecognition isn't available.
-  const [listening, setListening] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(false);
-  const recogRef = useRef<SpeechRecognition | null>(null);
-  const voiceSupported = typeof window !== "undefined" &&
-    (("SpeechRecognition" in window) || ("webkitSpeechRecognition" in window));
-  const lastSpokenIdRef = useRef<string | null>(null);
+  // Voice chat — Gemini Live, opens in a dedicated modal.
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   const loadConversations = useCallback(
     async (selectId?: string | null) => {
@@ -142,79 +136,10 @@ export default function ChatPanel({ agent, companyId }: Props) {
     }
   }
 
-  // ── Voice (Web Speech API) ────────────────────────────────────────
-  function startListening() {
-    if (!voiceSupported || listening || sending) return;
-    const Ctor =
-      (window as unknown as { SpeechRecognition?: typeof SpeechRecognition }).SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
-    if (!Ctor) return;
-    const rec = new Ctor();
-    rec.continuous = false;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-    let lastTranscript = "";
-    rec.onresult = (ev: SpeechRecognitionEvent) => {
-      let txt = "";
-      for (let i = 0; i < ev.results.length; i++) {
-        txt += ev.results[i][0].transcript;
-      }
-      lastTranscript = txt;
-      setInput(txt);
-    };
-    rec.onerror = () => {
-      setListening(false);
-    };
-    rec.onend = () => {
-      setListening(false);
-      recogRef.current = null;
-      // Auto-send when the user stops speaking with a meaningful transcript.
-      const trimmed = lastTranscript.trim();
-      if (trimmed.length > 1) {
-        // Use a synthetic submit through onSend's path so the same flow runs.
-        const form = inputRef.current?.form;
-        if (form) form.requestSubmit();
-      }
-    };
-    recogRef.current = rec;
-    setListening(true);
-    rec.start();
-  }
-
-  function stopListening() {
-    recogRef.current?.stop();
-    setListening(false);
-  }
-
-  // Speak the latest assistant message when TTS is enabled. Only speak each
-  // message once — we track the last spoken id.
-  useEffect(() => {
-    if (!ttsEnabled || messages.length === 0) return;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const last = messages[messages.length - 1];
-    if (last.role !== "assistant" || !last.content) return;
-    if (lastSpokenIdRef.current === last.id) return;
-    lastSpokenIdRef.current = last.id;
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(last.content);
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      window.speechSynthesis.speak(u);
-    } catch {
-      /* TTS is best-effort */
-    }
-  }, [messages, ttsEnabled]);
-
-  // Stop any speech when the user navigates away.
-  useEffect(() => {
-    return () => {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-      }
-      recogRef.current?.stop();
-    };
-  }, []);
+  // Voice chat now runs through VoiceModal + Gemini Live (see
+  // /lib/voice/session.ts). The legacy browser Web Speech (SpeechRecognition
+  // + speechSynthesis) was a typed-text simulator — replaced by real
+  // bidirectional audio with the LLM brain.
 
   return (
     <div className="flex h-[640px] gap-3">
@@ -335,40 +260,22 @@ export default function ChatPanel({ agent, companyId }: Props) {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={listening ? "Listening…" : `Message ${agent.name}…`}
+              placeholder={`Message ${agent.name}…`}
               disabled={sending}
               autoFocus
               className="flex-1 rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
             />
-            {/* TTS read-aloud toggle */}
-            <button
-              type="button"
-              onClick={() => setTtsEnabled((v) => !v)}
-              title={ttsEnabled ? "Read responses aloud: on" : "Read responses aloud: off"}
-              aria-label="Toggle voice read-aloud"
-              className={`grid h-9 w-9 place-items-center rounded-md border transition ${
-                ttsEnabled
-                  ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-border bg-bg-elev-1 text-text-dim hover:border-accent/40"
-              }`}
-            >
-              {ttsEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
-            </button>
-            {/* STT mic button */}
-            {voiceSupported && (
+            {/* Voice chat — opens a Gemini Live session in a modal */}
+            {(agent.voice_enabled ?? true) && (
               <button
                 type="button"
-                onClick={listening ? stopListening : startListening}
+                onClick={() => setVoiceOpen(true)}
                 disabled={sending}
-                title={listening ? "Stop listening (auto-sends on stop)" : "Speak to chat — uses your browser's speech recognition"}
-                aria-label={listening ? "Stop voice input" : "Start voice input"}
-                className={`grid h-9 w-9 place-items-center rounded-md border transition ${
-                  listening
-                    ? "animate-pulse border-bear bg-bear-soft text-bear"
-                    : "border-border bg-bg-elev-1 text-text-dim hover:border-accent/40"
-                }`}
+                title="Voice chat — Gemini Live"
+                aria-label="Start voice chat"
+                className="grid h-9 w-9 place-items-center rounded-md border border-border bg-bg-elev-1 text-text-dim transition hover:border-accent/40 hover:text-accent"
               >
-                <MicIcon />
+                <PhoneIcon />
               </button>
             )}
             <button
@@ -379,13 +286,20 @@ export default function ChatPanel({ agent, companyId }: Props) {
               Send
             </button>
           </div>
-          {!voiceSupported && (
-            <p className="mt-1 text-[10px] text-text-mute">
-              Voice input needs Chrome / Edge / Safari. Read-aloud works everywhere.
-            </p>
-          )}
         </form>
       </div>
+
+      <VoiceModal
+        open={voiceOpen}
+        agentName={agent.name}
+        agentLlmLabel={`${agent.llm_provider}/${agent.llm_model}`}
+        companyId={companyId}
+        agentId={agent.id}
+        onClose={() => {
+          setVoiceOpen(false);
+          loadConversations();
+        }}
+      />
     </div>
   );
 }
@@ -454,31 +368,10 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   );
 }
 
-function MicIcon() {
+function PhoneIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="19" x2="12" y2="23" />
-      <line x1="8" y1="23" x2="16" y2="23" />
-    </svg>
-  );
-}
-function SpeakerOnIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-    </svg>
-  );
-}
-function SpeakerOffIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <line x1="23" y1="9" x2="17" y2="15" />
-      <line x1="17" y1="9" x2="23" y2="15" />
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 2.07 4.18 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8 10a16 16 0 0 0 6 6l1.36-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
     </svg>
   );
 }

@@ -8,6 +8,7 @@ import AssetMultiPicker from "@/components/AssetMultiPicker";
 import ForecastingModelPicker from "@/components/ForecastingModelPicker";
 import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
+import VoicePicker from "@/components/VoicePicker";
 import { api, ApiError, type Agent, type Personality, type TradeMode } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { PERSONALITY_ICON, ROLE_LABEL, STRATEGY_LABEL } from "@/lib/personality";
@@ -32,6 +33,8 @@ export default function AgentDetailPage() {
   const [llmModel, setLlmModel] = useState("");
   const [forecastingModel, setForecastingModel] = useState("ttm-granite-r2");
   const [allowedAssets, setAllowedAssets] = useState<string[]>([]);
+  const [voiceId, setVoiceId] = useState<string | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -49,6 +52,8 @@ export default function AgentDetailPage() {
         setLlmModel(a.llm_model);
         setForecastingModel(a.forecasting_model);
         setAllowedAssets(a.allowed_assets ?? []);
+        setVoiceId(a.voice_id);
+        setVoiceEnabled(a.voice_enabled);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -75,6 +80,8 @@ export default function AgentDetailPage() {
         llm_model: llmModel,
         forecasting_model: forecastingModel,
         allowed_assets: allowedAssets,
+        voice_id: voiceId,
+        voice_enabled: voiceEnabled,
       });
       setAgent(updated);
       setDirty(false);
@@ -233,6 +240,21 @@ export default function AgentDetailPage() {
             value={forecastingModel}
             onChange={(k) => markDirty(setForecastingModel)(k)}
           />
+        </Section>
+
+        <Section title="Voice">
+          <VoicePicker
+            value={voiceId}
+            enabled={voiceEnabled}
+            onChange={(name) => markDirty(setVoiceId)(name)}
+            onEnabledChange={(on) => markDirty(setVoiceEnabled)(on)}
+          />
+          {agent.llm_provider !== "google" && (
+            <p className="mt-2 text-[10px] text-text-mute">
+              Voice uses Gemini Live. The text-chat brain stays on{" "}
+              <span className="num">{agent.llm_provider}/{agent.llm_model}</span>.
+            </p>
+          )}
         </Section>
 
         <Section title="Allowed assets">

@@ -138,6 +138,7 @@ export type AgentCreate = {
   allowed_contract_types?: string[];
   reports_to_agent_id?: string | null;
   voice_id?: string | null;
+  voice_enabled?: boolean;
   allocated_balance_usd?: number;
   max_position_size_usd?: number;
   max_daily_drawdown_pct?: number;
@@ -341,6 +342,12 @@ export const api = {
 
   listForecastingModels: () =>
     request<{ models: ForecastModelDef[] }>("/api/v1/forecasting/models"),
+
+  // ─── voice ───
+  listVoices: () =>
+    request<{ voices: VoiceDef[]; default: string }>("/api/v1/llm/voices"),
+  getVoiceSessionInfo: (companyId: string, agentId: string) =>
+    request<VoiceSessionInfo>(`/api/v1/companies/${companyId}/agents/${agentId}/voice/session`),
 
   // ─── economic calendar ───
   listEvents: (opts?: { impact?: "all" | "high" | "medium" | "low"; horizonHours?: number; limit?: number }) => {
@@ -581,6 +588,27 @@ export type DerivStatementTransaction = {
 export type DerivStatement = {
   count: number;
   transactions: DerivStatementTransaction[];
+};
+
+// ─── voice (Gemini Live) ───
+
+export type VoiceFeel = "warm" | "neutral" | "cool" | "energetic";
+
+export type VoiceDef = {
+  name: string;
+  label: string;
+  feel: VoiceFeel;
+  description: string;
+};
+
+export type VoiceSessionInfo = {
+  available: boolean;
+  voice_name: string;
+  voice_label: string;
+  voice_feel: VoiceFeel | "";
+  model: string;
+  requires_gemini_brain: boolean;
+  agent_brain_label: string;
 };
 
 // ─── safety types ───
