@@ -14,6 +14,16 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# NEXT_PUBLIC_* are inlined into the JS bundle at build time, so they have
+# to be passed as build args (the runtime compose `environment:` block can't
+# rescue this). Defaults match the dev compose stack's exposed host ports.
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:18080
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_DEFAULT_SYMBOL=frxEURUSD
+ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_DEFAULT_SYMBOL=${NEXT_PUBLIC_DEFAULT_SYMBOL}
+
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
