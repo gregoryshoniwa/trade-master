@@ -55,6 +55,9 @@ def _ensure_can_write(role: str) -> None:
 
 
 def _row_to_agent(r: asyncpg.Record) -> Agent:
+    combos = r["allowed_combinations"]
+    if isinstance(combos, str):
+        combos = json.loads(combos)
     return Agent(
         id=r["id"],
         company_id=r["company_id"],
@@ -75,6 +78,7 @@ def _row_to_agent(r: asyncpg.Record) -> Agent:
         max_daily_drawdown_pct=float(r["max_daily_drawdown_pct"]),
         personality=r["personality"],
         trade_selection_mode=r["trade_selection_mode"],
+        allowed_combinations=combos or [],
         kelly_fraction=float(r["kelly_fraction"]),
         min_confidence_threshold=float(r["min_confidence_threshold"]),
         min_payoff_ratio=float(r["min_payoff_ratio"]),
@@ -169,7 +173,7 @@ async def create_agent(
                 llm_provider, llm_model, forecasting_model, llm_config, voice_id, voice_enabled,
                 strategies, allowed_assets, allowed_contract_types,
                 allocated_balance_usd, max_position_size_usd, max_daily_drawdown_pct,
-                personality, trade_selection_mode,
+                personality, trade_selection_mode, allowed_combinations,
                 kelly_fraction, min_confidence_threshold, min_payoff_ratio,
                 max_trades_per_day, target_holding_secs, event_aware,
                 trade_mode, system_prompt_addendum, created_by
@@ -179,10 +183,10 @@ async def create_agent(
                 $6, $7, $8, $9, $10, $11,
                 $12, $13, $14,
                 $15, $16, $17,
-                $18, $19,
-                $20, $21, $22,
-                $23, $24, $25,
-                $26, $27, $28
+                $18, $19, $20::jsonb,
+                $21, $22, $23,
+                $24, $25, $26,
+                $27, $28, $29
             )
             RETURNING *
             """,
@@ -190,7 +194,7 @@ async def create_agent(
             body.llm_provider, body.llm_model, body.forecasting_model, json.dumps(body.llm_config), body.voice_id, body.voice_enabled,
             body.strategies, body.allowed_assets, body.allowed_contract_types,
             body.allocated_balance_usd, body.max_position_size_usd, body.max_daily_drawdown_pct,
-            body.personality, body.trade_selection_mode,
+            body.personality, body.trade_selection_mode, json.dumps(body.allowed_combinations),
             kelly, min_conf, min_payoff,
             max_trades, holding, body.event_aware,
             body.trade_mode, body.system_prompt_addendum, account_id,
@@ -260,8 +264,11 @@ async def update_agent(
         values: list = []
         for i, (col, val) in enumerate(fields.items(), start=1):
             set_parts.append(f"{col} = ${i}")
-            # asyncpg won't auto-convert dict → jsonb.
-            values.append(json.dumps(val) if col == "llm_config" else val)
+            # asyncpg won't auto-convert dict/list → jsonb.
+            if col in ("llm_config", "allowed_combinations"):
+                values.append(json.dumps(val))
+            else:
+                values.append(val)
 
         values.append(agent_id)
         values.append(company_id)

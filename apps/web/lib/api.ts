@@ -107,6 +107,7 @@ export type Agent = {
   max_daily_drawdown_pct: number;
   personality: Personality;
   trade_selection_mode: "specific" | "most_profitable" | "safest" | "balanced";
+  allowed_combinations: { strategy?: string; asset?: string; contract?: string }[];
   kelly_fraction: number;
   min_confidence_threshold: number;
   min_payoff_ratio: number;
@@ -339,6 +340,16 @@ export const api = {
   listForecastingModels: () =>
     request<{ models: ForecastModelDef[] }>("/api/v1/forecasting/models"),
 
+  // ─── economic calendar ───
+  listEvents: (opts?: { impact?: "all" | "high" | "medium" | "low"; horizonHours?: number; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.impact) q.set("impact", opts.impact);
+    if (opts?.horizonHours) q.set("horizon_hours", String(opts.horizonHours));
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return request<{ events: EconomicEvent[] }>(`/api/v1/calendar${qs ? `?${qs}` : ""}`);
+  },
+
   payroll: (companyId: string, window: PayrollWindow = "30d") =>
     request<PayrollSummary>(
       `/api/v1/companies/${companyId}/payroll?window=${window}`,
@@ -494,6 +505,23 @@ export type LLMModelDef = {
   output_cost_per_1m_usd: number;
   supports_tools: boolean;
   tier: LLMTier;
+};
+
+// ─── economic calendar ───
+
+export type EconomicEvent = {
+  event_id: string;
+  ts: string;
+  country: string;
+  name: string;
+  impact: "high" | "medium" | "low";
+  category: string | null;
+  previous: string | null;
+  forecast: string | null;
+  actual: string | null;
+  affected_currencies: string[];
+  affected_assets: string[];
+  source: string;
 };
 
 // ─── forecasting (TSFM) model types ───

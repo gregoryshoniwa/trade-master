@@ -171,6 +171,7 @@ class AgentCreate(BaseModel):
     max_daily_drawdown_pct: float = 5.0
     personality: str = "balanced"
     trade_selection_mode: str = "balanced"
+    allowed_combinations: list[dict] = Field(default_factory=list)
     kelly_fraction: float | None = None
     min_confidence_threshold: float | None = None
     min_payoff_ratio: float | None = None
@@ -199,6 +200,7 @@ class AgentUpdate(BaseModel):
     max_daily_drawdown_pct: float | None = None
     personality: str | None = None
     trade_selection_mode: str | None = None
+    allowed_combinations: list[dict] | None = None
     kelly_fraction: float | None = None
     min_confidence_threshold: float | None = None
     min_payoff_ratio: float | None = None
@@ -229,6 +231,7 @@ class Agent(BaseModel):
     max_daily_drawdown_pct: float
     personality: str
     trade_selection_mode: str
+    allowed_combinations: list[dict]
     kelly_fraction: float
     min_confidence_threshold: float
     min_payoff_ratio: float

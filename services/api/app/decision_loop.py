@@ -35,6 +35,7 @@ from nats.aio.msg import Msg
 from app import bus
 from app.db import acquire
 from app.risk import evaluate as risk_evaluate
+from app.selection_modes import evaluate_mode
 
 log = logging.getLogger("trademaster.decision")
 
@@ -133,7 +134,8 @@ class DecisionLoop:
                        a.min_payoff_ratio, a.max_position_size_usd,
                        a.allocated_balance_usd, a.trade_mode,
                        a.is_active, a.is_paused, a.target_holding_secs,
-                       a.forecasting_model
+                       a.forecasting_model, a.trade_selection_mode,
+                       a.allowed_combinations
                 FROM agents a
                 WHERE a.role = 'employee'
                   AND a.is_active = TRUE
@@ -192,11 +194,44 @@ class DecisionLoop:
 
         duration_secs = int(agent["target_holding_secs"] or 600)
 
+        # ── Trade-selection-mode gate (PLAN §7) ─────────────────────────
+        # EV in USD using the per-signal confidence as a win-probability
+        # proxy: EV = p·stake·(payoff−1) − (1−p)·stake. EV gating threshold
+        # is a per-agent constant derived from allocation/Kelly so it scales
+        # sensibly with account size.
+        ev_usd = float(confidence) * float(proposed) * (payoff - 1) - (1 - float(confidence)) * float(proposed)
+        ev_threshold_usd = max(0.25, allocation * kelly * 0.05)
+        mode = agent["trade_selection_mode"] or "balanced"
+        allowed_combos = agent["allowed_combinations"]
+        if isinstance(allowed_combos, str):
+            allowed_combos = json.loads(allowed_combos)
+        triggering_strategy = strategies[0] if strategies else None
+        accept, mode_reason = evaluate_mode(
+            mode,
+            allowed_combinations=allowed_combos or [],
+            strategy=triggering_strategy,
+            asset=asset,
+            contract=contract_type,
+            ev_usd=ev_usd,
+            ev_threshold_usd=ev_threshold_usd,
+            forecast=fc.get("forecast"),
+            direction=direction,
+            stop_loss=stop,
+            confidence=confidence,
+        )
+        if not accept:
+            log.info(
+                "intent rejected by mode '%s' agent=%s asset=%s: %s",
+                mode, agent["name"], asset, mode_reason,
+            )
+            return
+
         model = fc.get("model")
         rationale = (
             f"{agent['name']} ({', '.join(strategies)}): {model} says {direction} "
             f"with confidence {confidence:.2f} (floor {float(agent['min_confidence_threshold']):.2f}). "
-            f"Stake sized via Kelly {kelly:.2f} × allocation × confidence."
+            f"Stake sized via Kelly {kelly:.2f} × allocation × confidence. "
+            f"Mode={mode}: {mode_reason}."
         )
 
         # Snapshot the decision inputs so the postmortem is accurate even if
@@ -223,6 +258,14 @@ class DecisionLoop:
                 "method": "fractional_kelly_x_confidence",
                 "proposed_stake_usd": round(proposed, 4),
                 "multiplier": multiplier,
+            },
+            "selection_mode": {
+                "mode": mode,
+                "strategy": triggering_strategy,
+                "ev_usd": round(ev_usd, 4),
+                "ev_threshold_usd": round(ev_threshold_usd, 4),
+                "accepted": True,
+                "reason": mode_reason,
             },
         }
 
@@ -264,7 +307,9 @@ class DecisionLoop:
                         "SELECT now() + interval '%s seconds'" % APPROVE_WINDOW_SECS
                     )
 
-                ev = float(confidence) * stake * (payoff - 1)
+                # Proper EV (both legs): p·stake·(payoff−1) − (1−p)·stake.
+                # We re-compute against the post-risk applied stake.
+                ev = float(confidence) * stake * (payoff - 1) - (1 - float(confidence)) * stake
                 from datetime import datetime, timezone
                 asof_ts = datetime.fromtimestamp(int(fc["asof_ts"]), tz=timezone.utc)
 
