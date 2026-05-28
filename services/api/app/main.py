@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import bus, execution
+from app import bus, execution, safety
 from app.calendar import start_ingestor as start_calendar
 from app.calendar import stop_ingestor as stop_calendar
 from app.config import settings
@@ -14,6 +14,7 @@ from app.db import close_pool, init_pool
 from app.decision_loop import start_decision_loop, stop_decision_loop
 from app.routes import agents as agents_routes
 from app.routes import approvals as approvals_routes
+from app.routes import attribution as attribution_routes
 from app.routes import auth as auth_routes
 from app.routes import calendar as calendar_routes
 from app.routes import chat as chat_routes
@@ -24,6 +25,7 @@ from app.routes import me as me_routes
 from app.routes import members as members_routes
 from app.routes import payroll as payroll_routes
 from app.routes import postmortems as postmortems_routes
+from app.routes import safety as safety_routes
 from app.routes import symbols as symbols_routes
 
 logging.basicConfig(
@@ -44,9 +46,11 @@ async def lifespan(_: FastAPI):
     await start_decision_loop()
     await execution.start()
     await start_calendar()
+    await safety.start()
     try:
         yield
     finally:
+        await safety.stop()
         await stop_calendar()
         await execution.stop()
         await stop_decision_loop()
@@ -92,3 +96,5 @@ app.include_router(payroll_routes.router, prefix="/api/v1")
 app.include_router(approvals_routes.router, prefix="/api/v1")
 app.include_router(postmortems_routes.router, prefix="/api/v1")
 app.include_router(calendar_routes.router, prefix="/api/v1")
+app.include_router(safety_routes.router, prefix="/api/v1")
+app.include_router(attribution_routes.router, prefix="/api/v1")

@@ -5,6 +5,7 @@ chat route never calls Risk; only the decision loop does. The checks
 are intentionally boring and predictable.
 
 Phase 1 scope:
+  - Kill switch (per-company; flipped by admin OR circuit breaker)
   - Per-agent caps (allocation, max position size, max daily DD)
   - Trade frequency cap (max_trades_per_day)
   - Confidence floor (agent.min_confidence_threshold)
@@ -94,13 +95,23 @@ async def evaluate(
         )
     checks.append(RiskCheck("not_paused", True))
 
-    # ── company tier ────────────────────────────────────────────
+    # ── company tier + kill switch ──────────────────────────────
     co = await conn.fetchrow(
-        "SELECT current_asset_tier, unlocked_contract_types FROM companies WHERE id = $1",
+        """
+        SELECT current_asset_tier, unlocked_contract_types,
+               kill_switch_active, kill_switch_reason
+        FROM companies WHERE id = $1
+        """,
         company_id,
     )
     if co is None:
         return _fail("company not found", checks)
+    if co["kill_switch_active"]:
+        return _fail(
+            f"kill switch active: {co['kill_switch_reason'] or 'no reason given'}",
+            _add(checks, "kill_switch", False, detail=co["kill_switch_reason"]),
+        )
+    checks.append(RiskCheck("kill_switch", True))
     unlocked_contracts = list(co["unlocked_contract_types"] or [])
     contract_ok = contract_type in unlocked_contracts
     checks.append(RiskCheck(

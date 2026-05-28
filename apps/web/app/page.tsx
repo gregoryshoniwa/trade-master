@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentsPanel from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
+import KillSwitch from "@/components/KillSwitch";
 import TickChart from "@/components/TickChart";
 import { api, type SymbolDef, type TradeIntent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -191,6 +192,7 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          {active && <KillSwitch companyId={active.id} />}
           <AssetPicker value={symbol} onChange={chooseSymbol} />
           {!loading && me && companies.length === 0 && (
             <Link

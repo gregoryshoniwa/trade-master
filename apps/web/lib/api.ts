@@ -350,6 +350,26 @@ export const api = {
     return request<{ events: EconomicEvent[] }>(`/api/v1/calendar${qs ? `?${qs}` : ""}`);
   },
 
+  // ─── safety ───
+  getSafety: (companyId: string) =>
+    request<SafetyState>(`/api/v1/companies/${companyId}/safety`),
+  setKillSwitch: (companyId: string, active: boolean, reason?: string) =>
+    request<SafetyState>(`/api/v1/companies/${companyId}/kill-switch`, {
+      method: "POST",
+      body: JSON.stringify({ active, reason }),
+    }),
+  setLossLimit: (companyId: string, daily_loss_limit_usd: number | null) =>
+    request<SafetyState>(`/api/v1/companies/${companyId}/safety/loss-limit`, {
+      method: "PUT",
+      body: JSON.stringify({ daily_loss_limit_usd }),
+    }),
+
+  // ─── attribution ───
+  getAttribution: (companyId: string, window: AttributionWindow = "30d") =>
+    request<AttributionSummary>(
+      `/api/v1/companies/${companyId}/attribution?window=${window}`,
+    ),
+
   payroll: (companyId: string, window: PayrollWindow = "30d") =>
     request<PayrollSummary>(
       `/api/v1/companies/${companyId}/payroll?window=${window}`,
@@ -522,6 +542,65 @@ export type EconomicEvent = {
   affected_currencies: string[];
   affected_assets: string[];
   source: string;
+};
+
+// ─── safety types ───
+
+export type SafetyState = {
+  kill_switch_active: boolean;
+  kill_switch_reason: string | null;
+  kill_switch_at: string | null;
+  daily_loss_limit_usd: number | null;
+  today_realized_pnl_usd: number;
+};
+
+// ─── attribution types ───
+
+export type AttributionWindow = "today" | "7d" | "30d" | "all";
+
+export type AgentAttribution = {
+  agent_id: string | null;
+  agent_name: string | null;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  pnl_usd: number;
+  best_usd: number;
+  worst_usd: number;
+  avg_pnl_usd: number;
+  avg_calibration: number | null;
+  allocated_balance_usd: number | null;
+};
+
+export type ModelAttribution = {
+  source_model: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  pnl_usd: number;
+  avg_pnl_usd: number;
+};
+
+export type AssetAttribution = {
+  asset: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  pnl_usd: number;
+  avg_pnl_usd: number;
+};
+
+export type AttributionSummary = {
+  window: AttributionWindow;
+  trades: number;
+  pnl_usd: number;
+  win_rate: number;
+  by_agent: AgentAttribution[];
+  by_model: ModelAttribution[];
+  by_asset: AssetAttribution[];
 };
 
 // ─── forecasting (TSFM) model types ───
