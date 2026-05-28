@@ -8,6 +8,7 @@ import AssetPicker from "@/components/AssetPicker";
 import TickChart from "@/components/TickChart";
 import { api, type SymbolDef, type TradeIntent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { firstSymbol, friendlySymbol } from "@/lib/symbols";
 
 const FALLBACK_SYMBOL = "frxEURUSD";
 
@@ -25,7 +26,9 @@ const FMT_USD = new Intl.NumberFormat("en-US", {
 export default function DashboardPage() {
   // Fallback matches the dev compose stack's exposed gateway port (18080).
   const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:18080";
-  const envSymbol = process.env.NEXT_PUBLIC_DEFAULT_SYMBOL ?? FALLBACK_SYMBOL;
+  // Defensive: someone may set NEXT_PUBLIC_DEFAULT_SYMBOL to the same
+  // comma-list as the gateway's DERIV_DEFAULT_SYMBOL. Take the first entry.
+  const envSymbol = firstSymbol(process.env.NEXT_PUBLIC_DEFAULT_SYMBOL, FALLBACK_SYMBOL);
 
   const { loading, me, companies, activeCompanyId } = useAuth();
   const active = companies.find((c) => c.id === activeCompanyId) ?? null;
@@ -40,10 +43,12 @@ export default function DashboardPage() {
   // across symbols (not just the one the chart is showing).
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
-  // Restore symbol choice when active company changes.
+  // Restore symbol choice when active company changes. Defensive: a previous
+  // build may have stored a comma-list here (the gateway's subscription list
+  // got mis-baked as the web default). Always take the first entry.
   useEffect(() => {
     const stored = localStorage.getItem(activeSymbolKey(activeCompanyId));
-    if (stored) setSymbol(stored);
+    if (stored) setSymbol(firstSymbol(stored, FALLBACK_SYMBOL));
   }, [activeCompanyId]);
 
   // Lookup display metadata for the current symbol.
@@ -219,7 +224,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Symbol"
-          value={symbolMeta?.display ?? symbol}
+          value={symbolMeta?.display ?? friendlySymbol(symbol)}
           tone="muted"
           sub={symbolMeta?.asset_class ?? ""}
         />
@@ -232,7 +237,7 @@ export default function DashboardPage() {
             symbol={symbol}
             wsUrl={`${wsUrl}/ws/ticks`}
             decimals={symbolMeta?.decimals ?? 4}
-            displayName={symbolMeta?.display}
+            displayName={symbolMeta?.display ?? friendlySymbol(symbol)}
             intents={symbolIntents}
             highlightedIntentId={selectedIntentId}
           />
@@ -263,10 +268,10 @@ function StatCard({
     : tone === "accent" ? "text-accent"
     : "text-text";
   return (
-    <div className="rounded-2xl border border-border bg-bg-card p-4">
-      <div className="text-xs uppercase tracking-widest text-text-mute">{label}</div>
-      <div className={`num mt-1 text-2xl font-medium ${toneCls}`}>{value}</div>
-      {sub && <div className="text-xs text-text-mute">{sub}</div>}
+    <div className="min-w-0 rounded-2xl border border-border bg-bg-card p-4">
+      <div className="truncate text-xs uppercase tracking-widest text-text-mute">{label}</div>
+      <div className={`num mt-1 truncate text-2xl font-medium ${toneCls}`} title={value}>{value}</div>
+      {sub && <div className="truncate text-xs text-text-mute">{sub}</div>}
     </div>
   );
 }

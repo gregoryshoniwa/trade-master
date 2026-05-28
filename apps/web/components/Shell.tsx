@@ -41,7 +41,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onMobileMenu={() => setMobileOpen(true)} />
-        <main className="flex-1 overflow-auto bg-bg">{children}</main>
+        {/* overflow-x-hidden so a stray wide child can't push the whole shell.
+            Vertical scroll happens here so the chrome stays put. */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-bg">{children}</main>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type SymbolDef } from "@/lib/api";
+import { friendlySymbol } from "@/lib/symbols";
 
 type Props = {
   value: string;
@@ -65,12 +66,12 @@ export default function AssetPicker({ value, onChange }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm hover:border-bull/40"
+        className="flex max-w-[18rem] items-center gap-2 rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm hover:border-accent/40"
       >
-        <span className="font-medium">
-          {current?.display ?? value}
+        <span className="truncate font-medium" title={current?.display ?? value}>
+          {current?.display ?? friendlySymbol(value)}
         </span>
-        <span className="num text-text-mute">· {value}</span>
+        <span className="num hidden text-text-mute sm:inline">· {value.split(",")[0]}</span>
         <span className="text-text-mute">▾</span>
       </button>
 
