@@ -1,10 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, ApiError, type Postmortem } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  type Postmortem,
+  type PostmortemFacets,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { friendlySymbol } from "@/lib/symbols";
 
 const FMT_USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -13,33 +19,88 @@ const FMT_USD = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 4,
 });
 
+const PAGE_SIZE = 25;
+
+type Outcome = "win" | "loss" | "neutral";
+
 export default function PostmortemsPage() {
   const { me, activeCompanyId, companies, loading: authLoading } = useAuth();
   const active = companies.find((c) => c.id === activeCompanyId) ?? null;
 
   const [items, setItems] = useState<Postmortem[]>([]);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Filters + pagination
+  const [agentId, setAgentId] = useState<string>("");
+  const [asset, setAsset] = useState<string>("");
+  const [outcome, setOutcome] = useState<Outcome | "">("");
+  const [q, setQ] = useState<string>("");
+  const [debouncedQ, setDebouncedQ] = useState<string>("");
+  const [page, setPage] = useState(0);
+  const [facets, setFacets] = useState<PostmortemFacets>({ assets: [], agents: [] });
+
+  // 300ms debounce so each keystroke doesn't refetch.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Reset to page 0 whenever a filter changes — otherwise an empty page
+  // (e.g. you filter for an asset that only has 3 results while on page 4)
+  // looks like "no results" when there really are some.
+  useEffect(() => {
+    setPage(0);
+  }, [agentId, asset, outcome, debouncedQ]);
 
   const refresh = useCallback(async () => {
     if (!activeCompanyId) return;
     setLoading(true);
     setError(null);
     try {
-      const r = await api.listPostmortems(activeCompanyId, { limit: 50 });
+      const r = await api.listPostmortems(activeCompanyId, {
+        agentId: agentId || undefined,
+        asset: asset || undefined,
+        outcome: outcome || undefined,
+        q: debouncedQ || undefined,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      });
       setItems(r.postmortems);
+      setTotal(r.total);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "load failed");
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId]);
+  }, [activeCompanyId, agentId, asset, outcome, debouncedQ, page]);
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 8_000);
+    // Auto-refresh only on page 0 with no filters — otherwise the polling
+    // tug-of-war steals page state from the user.
+    const idle = page === 0 && !agentId && !asset && !outcome && !debouncedQ;
+    if (!idle) return;
+    const t = setInterval(refresh, 10_000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, page, agentId, asset, outcome, debouncedQ]);
+
+  // Facets load once per company; they're the dropdown source.
+  useEffect(() => {
+    if (!activeCompanyId) return;
+    api.listPostmortemFacets(activeCompanyId).then(setFacets).catch(() => { /* ignore */ });
+  }, [activeCompanyId]);
+
+  const filtered = !!(agentId || asset || outcome || debouncedQ);
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const pageEnd = Math.min(total, (page + 1) * PAGE_SIZE);
+
+  // Roll-ups on this page (NOT global) — clear about scope.
+  const wins = useMemo(() => items.filter((p) => p.outcome === "win").length, [items]);
+  const losses = useMemo(() => items.filter((p) => p.outcome === "loss").length, [items]);
+  const net = useMemo(() => items.reduce((s, p) => s + p.pnl_usd, 0), [items]);
 
   if (authLoading) return <main className="px-6 py-8 text-sm text-text-mute">Loading…</main>;
   if (!me) {
@@ -54,9 +115,9 @@ export default function PostmortemsPage() {
     return <main className="mx-auto max-w-md px-6 py-16 text-center text-sm text-text-mute">Select or create a company first.</main>;
   }
 
-  const wins = items.filter((p) => p.outcome === "win").length;
-  const losses = items.filter((p) => p.outcome === "loss").length;
-  const net = items.reduce((s, p) => s + p.pnl_usd, 0);
+  function clearFilters() {
+    setAgentId(""); setAsset(""); setOutcome(""); setQ("");
+  }
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-8">
@@ -73,30 +134,116 @@ export default function PostmortemsPage() {
         </button>
       </header>
 
-      {items.length > 0 && (
-        <div className="mb-6 grid grid-cols-3 gap-3 text-sm">
-          <SummaryStat label="Settled" value={String(items.length)} />
-          <SummaryStat label="Win / Loss" value={`${wins} / ${losses}`} />
-          <SummaryStat
-            label="Net P&L"
-            value={FMT_USD.format(net)}
-            cls={net >= 0 ? "text-bull" : "text-bear"}
-          />
+      <section className="mb-4 rounded-2xl border border-border bg-bg-card p-3">
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-5">
+          <Filter label="Agent">
+            <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className={selectCls}>
+              <option value="">All agents</option>
+              {facets.agents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </Filter>
+          <Filter label="Asset">
+            <select value={asset} onChange={(e) => setAsset(e.target.value)} className={selectCls}>
+              <option value="">All assets</option>
+              {facets.assets.map((s) => (
+                <option key={s} value={s}>{friendlySymbol(s)}</option>
+              ))}
+            </select>
+          </Filter>
+          <Filter label="Outcome">
+            <select value={outcome} onChange={(e) => setOutcome(e.target.value as Outcome | "")} className={selectCls}>
+              <option value="">All outcomes</option>
+              <option value="win">Wins only</option>
+              <option value="loss">Losses only</option>
+              <option value="neutral">Neutral</option>
+            </select>
+          </Filter>
+          <Filter label="Search narrative">
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="e.g. trend reversal, EMA"
+              className={selectCls}
+            />
+          </Filter>
+          <Filter label="&nbsp;">
+            <button
+              type="button"
+              onClick={clearFilters}
+              disabled={!filtered}
+              className="h-full rounded-md border border-border px-3 py-2 text-xs text-text-dim hover:border-bull/40 hover:text-text disabled:opacity-40"
+            >
+              Clear filters
+            </button>
+          </Filter>
         </div>
-      )}
+      </section>
+
+      <div className="mb-4 grid grid-cols-3 gap-3 text-sm">
+        <SummaryStat label={filtered ? "Matching" : "Total settled"} value={String(total)} />
+        <SummaryStat label={`This page (${items.length})`} value={`${wins} W / ${losses} L`} />
+        <SummaryStat
+          label="P&L (this page)"
+          value={FMT_USD.format(net)}
+          cls={net >= 0 ? "text-bull" : "text-bear"}
+        />
+      </div>
 
       {error && <div className="mb-4 rounded-md border border-bear/40 bg-bear-soft p-3 text-sm text-bear">{error}</div>}
 
-      {items.length === 0 ? (
+      {total === 0 ? (
         <div className="rounded-2xl border border-border bg-bg-card p-6 text-center text-sm text-text-mute">
-          No settled trades yet. Postmortems are generated automatically when a contract closes.
+          {filtered
+            ? "No postmortems match these filters. Try clearing one."
+            : "No settled trades yet. Postmortems are generated automatically when a contract closes."}
         </div>
       ) : (
-        <div className="space-y-4">
-          {items.map((p) => <PostmortemCard key={p.id} pm={p} />)}
-        </div>
+        <>
+          <div className="space-y-4">
+            {items.map((p) => <PostmortemCard key={p.id} pm={p} />)}
+          </div>
+          <nav className="mt-6 flex items-center justify-between text-xs text-text-mute">
+            <span className="num">
+              {pageStart}–{pageEnd} of {total}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0 || loading}
+                className="rounded-md border border-border px-2 py-1 hover:border-bull/40 hover:text-text disabled:opacity-40"
+              >
+                ◂ Prev
+              </button>
+              <span className="num">page {page + 1} / {pageCount}</span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={page >= pageCount - 1 || loading}
+                className="rounded-md border border-border px-2 py-1 hover:border-bull/40 hover:text-text disabled:opacity-40"
+              >
+                Next ▸
+              </button>
+            </div>
+          </nav>
+        </>
       )}
     </main>
+  );
+}
+
+const selectCls =
+  "w-full rounded-md border border-border bg-bg-elev-1 px-2 py-1.5 text-xs text-text outline-none focus:border-accent";
+
+function Filter({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] uppercase tracking-widest text-text-mute">{label}</span>
+      {children}
+    </label>
   );
 }
 

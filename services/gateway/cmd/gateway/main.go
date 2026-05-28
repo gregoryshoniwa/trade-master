@@ -115,6 +115,43 @@ func main() {
 		logger.Warn("deriv.statement.req subscribe failed", "err", statementSubErr)
 	}
 
+	// NATS request/reply: api sends a `deriv.sell.req` with JSON
+	// {"contract_id":<int64>, "price":<float|0>}; we sell on Deriv and
+	// reply with the SellResult JSON (or an "error" key). 0 price = market.
+	// This is the path used by the dashboard's per-position "Close" button.
+	_, sellSubErr := nc.Subscribe("deriv.sell.req", func(m *nats.Msg) {
+		var req struct {
+			ContractID int64   `json:"contract_id"`
+			Price      float64 `json:"price"`
+		}
+		_ = json.Unmarshal(m.Data, &req)
+		if req.ContractID == 0 {
+			payload, _ := json.Marshal(map[string]any{"error": "contract_id required"})
+			_ = m.Respond(payload)
+			return
+		}
+		reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		defer cancel()
+		if !tradeClient.Ready() {
+			payload, _ := json.Marshal(map[string]any{"error": "trader not ready"})
+			_ = m.Respond(payload)
+			return
+		}
+		res, err := tradeClient.Sell(reqCtx, req.ContractID, req.Price)
+		if err != nil {
+			logger.Warn("sell failed", "contract_id", req.ContractID, "err", err)
+			payload, _ := json.Marshal(map[string]any{"error": err.Error()})
+			_ = m.Respond(payload)
+			return
+		}
+		logger.Info("sell ok", "contract_id", res.ContractID, "sold_for", res.SoldFor)
+		payload, _ := json.Marshal(res)
+		_ = m.Respond(payload)
+	})
+	if sellSubErr != nil {
+		logger.Warn("deriv.sell.req subscribe failed", "err", sellSubErr)
+	}
+
 	// Live balance fan-out: poll `balance` every 5s on the authorized
 	// session and republish to NATS. We tried a push subscription first,
 	// but Deriv's balance push goes silent after a socket reconnect (the

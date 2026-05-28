@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import bus, deriv as deriv_state, execution, safety
+from app import bus, deriv as deriv_state, execution, reconcile, safety
 from app.calendar import start_ingestor as start_calendar
 from app.calendar import stop_ingestor as stop_calendar
 from app.config import settings
@@ -15,6 +15,7 @@ from app.decision_loop import start_decision_loop, stop_decision_loop
 from app.routes import agents as agents_routes
 from app.routes import approvals as approvals_routes
 from app.routes import attribution as attribution_routes
+from app.routes import backtests as backtests_routes
 from app.routes import auth as auth_routes
 from app.routes import calendar as calendar_routes
 from app.routes import chat as chat_routes
@@ -47,6 +48,10 @@ async def lifespan(_: FastAPI):
     await bus.connect()
     await start_decision_loop()
     await execution.start()
+    await reconcile.start()
+    # Backtests running on the previous worker process are dead — mark them
+    # failed so the UI doesn't show stuck-forever rows.
+    await backtests_routes.reap_orphans()
     await deriv_state.start()
     await start_calendar()
     await safety.start()
@@ -56,6 +61,7 @@ async def lifespan(_: FastAPI):
         await safety.stop()
         await stop_calendar()
         await deriv_state.stop()
+        await reconcile.stop()
         await execution.stop()
         await stop_decision_loop()
         await bus.close()
@@ -102,6 +108,7 @@ app.include_router(postmortems_routes.router, prefix="/api/v1")
 app.include_router(calendar_routes.router, prefix="/api/v1")
 app.include_router(safety_routes.router, prefix="/api/v1")
 app.include_router(attribution_routes.router, prefix="/api/v1")
+app.include_router(backtests_routes.router, prefix="/api/v1")
 app.include_router(deriv_routes.router, prefix="/api/v1")
 app.include_router(voice_routes.router, prefix="/api/v1")
 app.include_router(voice_routes.voices_router, prefix="/api/v1")

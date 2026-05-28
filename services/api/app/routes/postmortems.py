@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
@@ -44,6 +44,9 @@ class Postmortem(BaseModel):
 
 class PostmortemList(BaseModel):
     postmortems: list[Postmortem]
+    total: int
+    limit: int
+    offset: int
 
 
 # ───────────────────────── helpers ──────────────────────────
@@ -100,29 +103,80 @@ async def list_postmortems(
     company_id: UUID,
     account_id: CurrentAccount,
     agent_id: Annotated[UUID | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    asset: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+    outcome: Annotated[Literal["win", "loss", "neutral"] | None, Query()] = None,
+    q: Annotated[str | None, Query(min_length=1, max_length=200, description="text search across narrative")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
+    # Build dynamic WHERE clauses. asyncpg uses positional $N — keep a
+    # parallel args list so the placeholders stay in step.
+    clauses: list[str] = ["p.company_id = $1"]
+    args: list[Any] = [company_id]
+    if agent_id is not None:
+        args.append(agent_id)
+        clauses.append(f"p.agent_id = ${len(args)}")
+    if asset is not None:
+        args.append(asset)
+        clauses.append(f"i.asset = ${len(args)}")
+    if outcome is not None:
+        args.append(outcome)
+        clauses.append(f"p.outcome = ${len(args)}")
+    if q is not None:
+        args.append(f"%{q}%")
+        clauses.append(f"p.narrative ILIKE ${len(args)}")
+    where = " AND ".join(clauses)
+
+    page_sql = _SELECT + f"""
+        WHERE {where}
+        ORDER BY p.generated_at DESC
+        LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}
+    """
+    count_sql = f"""
+        SELECT count(*) AS n
+        FROM trade_postmortems p
+        LEFT JOIN trade_intents i ON i.id = p.intent_id
+        WHERE {where}
+    """
+
     async with acquire() as conn:
         await _ensure_member(conn, company_id, account_id)
-        if agent_id is not None:
-            rows = await conn.fetch(
-                _SELECT + """
-                WHERE p.company_id = $1 AND p.agent_id = $2
-                ORDER BY p.generated_at DESC
-                LIMIT $3
-                """,
-                company_id, agent_id, limit,
-            )
-        else:
-            rows = await conn.fetch(
-                _SELECT + """
-                WHERE p.company_id = $1
-                ORDER BY p.generated_at DESC
-                LIMIT $2
-                """,
-                company_id, limit,
-            )
-    return PostmortemList(postmortems=[_row(r) for r in rows])
+        total = await conn.fetchval(count_sql, *args)
+        rows = await conn.fetch(page_sql, *args, limit, offset)
+
+    return PostmortemList(
+        postmortems=[_row(r) for r in rows],
+        total=int(total or 0),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/postmortems/facets")
+async def list_postmortem_facets(
+    company_id: UUID, account_id: CurrentAccount,
+):
+    """Distinct values the UI uses to populate filter dropdowns. Cheap;
+    folds into one query."""
+    async with acquire() as conn:
+        await _ensure_member(conn, company_id, account_id)
+        rows = await conn.fetch(
+            """
+            SELECT i.asset AS asset, a.id AS agent_id, a.name AS agent_name
+            FROM trade_postmortems p
+            JOIN trade_intents i ON i.id = p.intent_id
+            LEFT JOIN agents a ON a.id = p.agent_id
+            WHERE p.company_id = $1
+            """,
+            company_id,
+        )
+    assets = sorted({r["asset"] for r in rows if r["asset"]})
+    seen: dict[str, str] = {}
+    for r in rows:
+        if r["agent_id"] and r["agent_name"]:
+            seen[str(r["agent_id"])] = r["agent_name"]
+    agents = [{"id": k, "name": v} for k, v in sorted(seen.items(), key=lambda kv: kv[1].lower())]
+    return {"assets": assets, "agents": agents}
 
 
 @router.get("/intents/{intent_id}/postmortem", response_model=Postmortem)

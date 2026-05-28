@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import AgentsPanel from "@/components/AgentsPanel";
+import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
 import KillSwitch from "@/components/KillSwitch";
 import TickChart from "@/components/TickChart";
@@ -138,17 +138,26 @@ export default function DashboardPage() {
     () => intents.filter((i) => i.status === "executed" && i.closed_at == null),
     [intents],
   );
+  // "Today's realized" = P&L from contracts that CLOSED today, not from
+  // intents created today. A position opened yesterday and closed this
+  // morning counts here. The old version filtered on created_at which
+  // hid yesterday-opened-today-closed P&L and double-counted same-day
+  // opens regardless of whether they'd actually settled.
   const todayPnl = useMemo(
-    () => todays.reduce((sum, i) => sum + (i.realized_pnl_usd ?? 0), 0),
-    [todays],
+    () => intents
+      .filter((i) => i.closed_at != null && i.closed_at.startsWith(today))
+      .reduce((sum, i) => sum + (i.realized_pnl_usd ?? 0), 0),
+    [intents, today],
   );
+  // Unrealized must use the same multiplier-aware math as PositionRow,
+  // otherwise the rail and the header card disagree. Shared helper avoids
+  // drift — the dashboard previously dropped the multiplier here and
+  // showed $0.30 across 10 contracts when the broker had it at ~$50.
   const unrealizedPnl = useMemo(() => {
     let sum = 0;
     for (const p of openPositions) {
-      const live = livePrices[p.asset];
-      if (live == null || p.entry_price <= 0) continue;
-      const sign = p.direction === "up" ? 1 : p.direction === "down" ? -1 : 0;
-      sum += ((live - p.entry_price) / p.entry_price) * sign * p.stake_usd;
+      const u = computeUnrealized(p, livePrices[p.asset] ?? null);
+      if (u != null) sum += u;
     }
     return sum;
   }, [openPositions, livePrices]);
@@ -245,12 +254,20 @@ export default function DashboardPage() {
           />
         </div>
         <div className="flex flex-col gap-4">
-          <AgentsPanel
-            intents={intents}
-            livePrices={livePrices}
-            selectedIntentId={selectedIntentId}
-            onPickIntent={onPickIntent}
-          />
+          {active && (
+            <AgentsPanel
+              intents={intents}
+              livePrices={livePrices}
+              selectedIntentId={selectedIntentId}
+              onPickIntent={onPickIntent}
+              companyId={active.id}
+              onIntentClosed={() => {
+                // Pull fresh state now so the closed row disappears
+                // immediately instead of after the next 5s poll.
+                refreshIntents();
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

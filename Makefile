@@ -1,4 +1,4 @@
-.PHONY: help dev up down logs ps clean rebuild gateway-logs migrate migrate-down migrate-status psql
+.PHONY: help dev up down logs ps clean rebuild gateway-logs migrate migrate-down migrate-status psql backtest backtest-ttm backtest-kronos
 
 DB_URL ?= postgres://trademaster:dev_change_me@postgres:5432/trademaster?sslmode=disable
 MIGRATE_IMAGE = migrate/migrate:v4.18.1
@@ -76,3 +76,22 @@ migrate-status: ## Show current migration version
 		-path=/migrations \
 		-database "$(DB_URL)" \
 		version
+
+# Backtests — ad-hoc edge checks. Override BT_SYMBOLS/BT_COUNT/BT_STRIDE
+# from the command line, e.g. `make backtest-kronos BT_SYMBOLS=cryBTCUSD`.
+BT_SYMBOLS ?= frxEURUSD,frxGBPUSD,frxXAUUSD,cryBTCUSD,cryETHUSD
+BT_GRANULARITY ?= 60
+BT_COUNT ?= 5000
+BT_STRIDE ?= 3
+
+backtest-ttm: ## Walk-forward backtest TTM on BT_SYMBOLS
+	docker compose run --rm --no-deps ttm python -m app.backtest \
+		--symbols $(BT_SYMBOLS) --granularity $(BT_GRANULARITY) \
+		--count $(BT_COUNT) --stride $(BT_STRIDE) --horizon 60
+
+backtest-kronos: ## Walk-forward backtest Kronos on BT_SYMBOLS (slow; ~minutes/symbol)
+	docker compose run --rm --no-deps kronos python -m app.backtest \
+		--symbols $(BT_SYMBOLS) --granularity $(BT_GRANULARITY) \
+		--count $(BT_COUNT) --stride $(BT_STRIDE) --horizon 12
+
+backtest: backtest-ttm backtest-kronos ## Run both backtests back-to-back

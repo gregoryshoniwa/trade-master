@@ -33,19 +33,15 @@ export default function VoiceModal({
   const sessionRef = useRef<VoiceSession | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-  // Build the WS URL — same origin as the api the rest of the page hits.
-  // NEXT_PUBLIC_API_URL is the http(s) origin; we just swap the scheme.
-  function buildWsUrl() {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    const wsBase = base.replace(/^http/i, "ws");
-    return `${wsBase}/api/v1/companies/${companyId}/agents/${agentId}/voice/connect`;
-  }
-
   async function start() {
     if (sessionRef.current) return;
     setError(null);
     setTranscript([]);
-    const sess = new VoiceSession({ url: buildWsUrl() }, {
+    // The session now mints its own ephemeral token via the api and opens
+    // the WSS directly to Gemini — no more local WS URL to construct, no
+    // more cross-port WS failures when the dashboard runs behind a tunnel
+    // that forwards 3000 transparently but not 8000.
+    const sess = new VoiceSession({ companyId, agentId }, {
       onState: setState,
       onError: setError,
       onReady: (i) => setInfo({

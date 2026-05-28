@@ -334,6 +334,77 @@ func (c *Client) Buy(ctx context.Context, params BuyParams, maxPrice float64) (*
 	}
 }
 
+// SellResult is the parsed `sell` response — what the broker recorded for
+// the close (final payout and the running balance after the trade settled).
+type SellResult struct {
+	ContractID    int64   `json:"contract_id"`
+	SoldFor       float64 `json:"sold_for"`
+	BalanceAfter  float64 `json:"balance_after"`
+	TransactionID int64   `json:"transaction_id"`
+	ReferenceID   int64   `json:"reference_id"`
+}
+
+// Sell closes an open contract at market (price=0). Used by the api's
+// manual-close endpoint when a user clicks "Close" on a position card.
+func (c *Client) Sell(ctx context.Context, contractID int64, price float64) (*SellResult, error) {
+	if !c.Ready() {
+		return nil, fmt.Errorf("trader not ready (not authorized)")
+	}
+	reqID := c.nextReqID()
+	ch := c.register(reqID)
+
+	if err := c.send(ctx, map[string]any{
+		"sell":   contractID,
+		"price":  price, // 0 = sell at market
+		"req_id": reqID,
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.pending, reqID)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("send sell: %w", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case raw, ok := <-ch:
+		if !ok {
+			return nil, fmt.Errorf("connection lost during sell")
+		}
+		var resp struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Sell *struct {
+				ContractID    int64   `json:"contract_id"`
+				SoldFor       float64 `json:"sold_for"`
+				BalanceAfter  float64 `json:"balance_after"`
+				TransactionID int64   `json:"transaction_id"`
+				ReferenceID   int64   `json:"reference_id"`
+			} `json:"sell"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("parse sell resp: %w", err)
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("deriv: %s — %s", resp.Error.Code, resp.Error.Message)
+		}
+		if resp.Sell == nil {
+			return nil, fmt.Errorf("deriv: empty sell response")
+		}
+		return &SellResult{
+			ContractID:    resp.Sell.ContractID,
+			SoldFor:       resp.Sell.SoldFor,
+			BalanceAfter:  resp.Sell.BalanceAfter,
+			TransactionID: resp.Sell.TransactionID,
+			ReferenceID:   resp.Sell.ReferenceID,
+		}, nil
+	case <-time.After(20 * time.Second):
+		return nil, fmt.Errorf("sell timeout")
+	}
+}
+
 // StatementTransaction mirrors one row from Deriv's `statement` API. Amount
 // is signed (negative = debit, positive = credit). BalanceAfter is the
 // authoritative running balance at the moment of the transaction.

@@ -9,13 +9,15 @@ class Settings(BaseSettings):
     # NATS
     nats_url: str = "nats://nats:4222"
 
-    # Model — Kronos-small (24.7M) + the shared Kronos-Tokenizer-base. Label
+    # Model — Kronos-base (102M) + the shared Kronos-Tokenizer-base. Label
     # MUST equal the api's forecasting registry key and agents.forecasting_model.
-    # Small drops latency ~10× vs base on CPU while keeping the same OHLCV
-    # architecture; quality difference on this regime is marginal.
-    model_repo: str = "NeoQuasar/Kronos-small"
+    # We tried -small first to cut latency ~10× on CPU; signal quality
+    # collapsed (Kronny's win rate dropped below break-even on real fills).
+    # Back to -base — slower inference, the only thing on this machine that
+    # actually outperforms TTM in live trading.
+    model_repo: str = "NeoQuasar/Kronos-base"
     tokenizer_repo: str = "NeoQuasar/Kronos-Tokenizer-base"
-    model_label: str = "kronos-small"
+    model_label: str = "kronos-base"
     device: str = "cpu"            # Docker on Mac can't pass MPS/CUDA
 
     # Candle aggregation + context

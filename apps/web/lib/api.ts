@@ -346,8 +346,27 @@ export const api = {
   // ─── voice ───
   listVoices: () =>
     request<{ voices: VoiceDef[]; default: string }>("/api/v1/llm/voices"),
-  getVoiceSessionInfo: (companyId: string, agentId: string) =>
-    request<VoiceSessionInfo>(`/api/v1/companies/${companyId}/agents/${agentId}/voice/session`),
+  mintVoiceSession: (companyId: string, agentId: string) =>
+    request<VoiceSession>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/voice/session`,
+      { method: "POST" },
+    ),
+  runVoiceTool: (
+    companyId: string, agentId: string,
+    body: { session_id: string; call_id?: string; name: string; arguments: Record<string, unknown> },
+  ) =>
+    request<{ call_id: string | null; name: string; response: unknown }>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/voice/tool`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  submitVoiceTranscript: (
+    companyId: string, agentId: string,
+    body: { session_id: string; duration_ms: number; model: string; turns: { role: "user" | "assistant"; text: string }[] },
+  ) =>
+    request<{ persisted: boolean; user_chars: number; assistant_chars: number }>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/voice/transcript`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   // ─── economic calendar ───
   listEvents: (opts?: { impact?: "all" | "high" | "medium" | "low"; horizonHours?: number; limit?: number }) => {
@@ -382,6 +401,32 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ daily_loss_limit_usd }),
     }),
+
+  // ─── backtests ───
+  createBacktest: (companyId: string, body: BacktestCreate) =>
+    request<BacktestRun>(
+      `/api/v1/companies/${companyId}/backtests`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  listBacktests: (companyId: string, limit = 50) =>
+    request<{ runs: BacktestRun[] }>(
+      `/api/v1/companies/${companyId}/backtests?limit=${limit}`,
+    ),
+
+  getBacktest: (companyId: string, runId: string) =>
+    request<BacktestRun>(
+      `/api/v1/companies/${companyId}/backtests/${runId}`,
+    ),
+
+  applyBacktest: (
+    companyId: string, runId: string,
+    body: { agent_id: string; set_min_confidence?: boolean; prune_weak_symbols?: boolean },
+  ) =>
+    request<BacktestApplyResult>(
+      `/api/v1/companies/${companyId}/backtests/${runId}/apply`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   // ─── attribution ───
   getAttribution: (companyId: string, window: AttributionWindow = "30d") =>
@@ -421,21 +466,157 @@ export const api = {
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
 
+  closeIntent: (companyId: string, intentId: string) =>
+    request<CloseResult>(
+      `/api/v1/companies/${companyId}/intents/${intentId}/close`,
+      { method: "POST" },
+    ),
+
   // ─── postmortems ───
-  listPostmortems: (companyId: string, opts?: { agentId?: string; limit?: number }) => {
-    const q = new URLSearchParams();
-    if (opts?.agentId) q.set("agent_id", opts.agentId);
-    if (opts?.limit) q.set("limit", String(opts.limit));
-    const qs = q.toString();
-    return request<{ postmortems: Postmortem[] }>(
+  listPostmortems: (
+    companyId: string,
+    opts?: {
+      agentId?: string;
+      asset?: string;
+      outcome?: "win" | "loss" | "neutral";
+      q?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ) => {
+    const p = new URLSearchParams();
+    if (opts?.agentId) p.set("agent_id", opts.agentId);
+    if (opts?.asset) p.set("asset", opts.asset);
+    if (opts?.outcome) p.set("outcome", opts.outcome);
+    if (opts?.q) p.set("q", opts.q);
+    if (opts?.limit != null) p.set("limit", String(opts.limit));
+    if (opts?.offset != null) p.set("offset", String(opts.offset));
+    const qs = p.toString();
+    return request<PostmortemPage>(
       `/api/v1/companies/${companyId}/postmortems${qs ? `?${qs}` : ""}`,
     );
   },
+
+  listPostmortemFacets: (companyId: string) =>
+    request<PostmortemFacets>(
+      `/api/v1/companies/${companyId}/postmortems/facets`,
+    ),
 
   getPostmortem: (companyId: string, intentId: string) =>
     request<Postmortem>(
       `/api/v1/companies/${companyId}/intents/${intentId}/postmortem`,
     ),
+};
+
+export type CloseResult = {
+  intent_id: string;
+  contract_id: number;
+  sold_for_usd: number;
+  realized_pnl_usd: number;
+  balance_after_usd: number;
+};
+
+export type BacktestStatus = "pending" | "running" | "done" | "failed";
+
+export type BacktestCreate = {
+  model_key: string;
+  symbols: string[];
+  granularity_secs?: number;
+  bar_count?: number;
+  horizon?: number;
+  stride?: number;
+  stop_pct?: number;
+  payoff_ratio?: number;
+};
+
+export type BacktestFloorBucket = {
+  floor: number;
+  n: number;
+  hit: number;
+  pnl: number;
+};
+
+export type BacktestPerSymbol = {
+  symbol: string;
+  // Populated when the symbol ran successfully:
+  n?: number;
+  flat?: number;
+  hit?: number;
+  brier?: number;
+  total_pnl_pct?: number;
+  avg_pnl_bps?: number;
+  win_rate?: number;
+  profit_factor?: number;
+  by_floor?: BacktestFloorBucket[];
+  // Populated when the symbol failed (couldn't fetch data, too few candles, etc.):
+  error?: string;
+};
+
+export type BacktestSummary = {
+  n_forecasts: number;
+  overall_hit_rate: number | null;
+  overall_brier: number | null;
+  overall_pnl_pct: number | null;
+  by_floor?: BacktestFloorBucket[];
+  best_floor: BacktestFloorBucket | null;
+  weak_symbols: string[];
+};
+
+export type BacktestResult = {
+  model_key: string;
+  params: Record<string, unknown>;
+  per_symbol: BacktestPerSymbol[];
+  summary: BacktestSummary;
+};
+
+export type BacktestRun = {
+  id: string;
+  company_id: string;
+  requested_by: string;
+  model_key: string;
+  symbols: string[];
+  granularity_secs: number;
+  bar_count: number;
+  horizon: number;
+  stride: number;
+  stop_pct: number;
+  payoff_ratio: number;
+  status: BacktestStatus;
+  error_message: string | null;
+  result_json: BacktestResult | null;
+  n_forecasts: number | null;
+  overall_hit_rate: number | null;
+  overall_brier: number | null;
+  overall_pnl_pct: number | null;
+  applied_actions: Array<{
+    agent_id: string;
+    agent_name: string;
+    by_account: string;
+    at: string;
+    changes: Record<string, unknown>;
+  }>;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_secs: number | null;
+};
+
+export type BacktestApplyResult = {
+  run_id: string;
+  agent_id: string;
+  changes: Record<string, unknown>;
+};
+
+export type PostmortemPage = {
+  postmortems: Postmortem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type PostmortemFacets = {
+  assets: string[];
+  agents: { id: string; name: string }[];
 };
 
 export type TradeIntentStatus =
@@ -601,14 +782,18 @@ export type VoiceDef = {
   description: string;
 };
 
-export type VoiceSessionInfo = {
+export type VoiceSession = {
   available: boolean;
+  session_id: string;
+  token: string | null;
+  ws_url: string | null;
+  model: string;
   voice_name: string;
   voice_label: string;
   voice_feel: VoiceFeel | "";
-  model: string;
   requires_gemini_brain: boolean;
   agent_brain_label: string;
+  expire_time: string | null;
 };
 
 // ─── safety types ───

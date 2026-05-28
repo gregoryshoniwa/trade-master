@@ -1,35 +1,43 @@
 "use client";
 
 /**
- * VoiceSession — browser-side controller for a Gemini Live call.
+ * VoiceSession — browser-direct Gemini Live client.
  *
- * Architecture: the browser opens a WebSocket to OUR api (not directly
- * to Google). The api proxies to Gemini Live so the API key never reaches
- * the browser and tool calls run in-process. We just shuttle PCM and
- * transcript events back and forth.
+ * Architecture (matches Google's recommended ephemeral-token pattern):
  *
- * State machine:
- *   "idle" → "connecting" → "ready" → "live" → "ended"
- *                                         ↓
- *                                       "error"
+ *   1. Browser POSTs `/voice/session` to the api. Api mints a one-shot
+ *      ephemeral token bound to this agent's exact model + voice + system
+ *      prompt + tools (the GEMINI_API_KEY never leaves the server).
+ *   2. Browser opens the WebSocket DIRECTLY to
+ *      `wss://generativelanguage.googleapis.com/...?access_token=<token>`.
+ *      No api WS proxy — which means no more cross-port WS failures when
+ *      the dashboard is behind a tunnel that forwards 3000 but not 8000.
+ *   3. Browser sends a tiny `setup` message (the constrained-token endpoint
+ *      already knows the full config; setup just needs the model id to
+ *      bind the session) and waits for `setupComplete`.
+ *   4. Audio in: `realtimeInput.audio.data` base64 PCM16 16kHz mono frames.
+ *      Audio out: `serverContent.modelTurn.parts[].inlineData` base64 PCM
+ *      at 24kHz mono.
+ *   5. Tool calls round-trip through our `/voice/tool` so the function
+ *      runs with the user's auth context, then we send `toolResponse`
+ *      back over the same WS.
+ *   6. On hang-up, the browser POSTs the assembled transcript to
+ *      `/voice/transcript` for conversation_messages + mem0 + usage.
  *
- * Wire protocol (text frames, JSON-tagged) — kept in sync with
- * services/api/app/routes/voice.py:
- *   browser → api:  {type:"audio", data:b64} | {type:"end_turn"} | {type:"bye"}
- *   api → browser:  {type:"ready", voice, model, requires_gemini_brain}
- *                  | {type:"audio", data:b64}
- *                  | {type:"transcript", role:"user"|"assistant", text}
- *                  | {type:"tool_call", name, arguments}
- *                  | {type:"error", message}
- *                  | {type:"closed", duration_ms}
+ * The half-duplex mic gate (pause uploads while playback is queued) is
+ * kept — browser AEC doesn't see our scheduled BufferSource playback, so
+ * without it the mic captures the speakers and Gemini hears its own voice.
  */
+
+import { api } from "@/lib/api";
 
 export type SessionState = "idle" | "connecting" | "ready" | "live" | "ended" | "error";
 
 export type TranscriptTurn = { role: "user" | "assistant"; text: string };
 
 export type SessionInit = {
-  url: string; // ws[s]://host/api/v1/companies/{cid}/agents/{aid}/voice/connect
+  companyId: string;
+  agentId: string;
 };
 
 export type SessionCallbacks = {
@@ -44,23 +52,50 @@ export type SessionCallbacks = {
 
 const OUTPUT_SAMPLE_RATE = 24000; // Gemini Live native-audio out
 
+type GeminiToolCall = {
+  toolCall?: {
+    functionCalls?: Array<{
+      id?: string;
+      name: string;
+      args?: Record<string, unknown>;
+    }>;
+  };
+};
+
+type GeminiServerContent = {
+  serverContent?: {
+    modelTurn?: { parts?: Array<{ inlineData?: { data?: string } }> };
+    inputTranscription?: { text?: string };
+    outputTranscription?: { text?: string };
+    turnComplete?: boolean;
+  };
+};
+
 export class VoiceSession {
+  private companyId: string;
+  private agentId: string;
+  private cb: SessionCallbacks;
   private ws: WebSocket | null = null;
   private state: SessionState = "idle";
-  private cb: SessionCallbacks;
-  private url: string;
 
   // Mic capture
   private micStream: MediaStream | null = null;
   private micCtx: AudioContext | null = null;
   private micNode: AudioWorkletNode | null = null;
 
-  // Playback
+  // Playback (24kHz from Gemini)
   private outCtx: AudioContext | null = null;
   private outNextStartTime = 0;
 
+  // Session metadata + accounting
+  private sessionId = "";
+  private model = "";
+  private transcript: TranscriptTurn[] = [];
+  private startedAtMs = 0;
+
   constructor(init: SessionInit, cb: SessionCallbacks = {}) {
-    this.url = init.url;
+    this.companyId = init.companyId;
+    this.agentId = init.agentId;
     this.cb = cb;
   }
 
@@ -76,8 +111,26 @@ export class VoiceSession {
     if (this.state !== "idle") return;
     this.setState("connecting");
     try {
-      await this.openSocket();
+      const session = await api.mintVoiceSession(this.companyId, this.agentId);
+      if (!session.available || !session.token || !session.ws_url) {
+        throw new Error(
+          session.available
+            ? "voice session returned no token"
+            : "voice is unavailable — GEMINI_API_KEY isn't configured on the api",
+        );
+      }
+      this.sessionId = session.session_id;
+      this.model = session.model;
+      this.cb.onReady?.({
+        voice: session.voice_name,
+        voiceLabel: session.voice_label,
+        model: session.model,
+        requiresGeminiBrain: session.requires_gemini_brain,
+      });
+      await this.openSocket(session.ws_url, session.model);
+      this.setState("ready");
       await this.startMic();
+      this.startedAtMs = performance.now();
       this.setState("live");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -88,41 +141,105 @@ export class VoiceSession {
     }
   }
 
-  private openSocket(): Promise<void> {
+  // Wait for the WebSocket to negotiate, send setup, await setupComplete.
+  // Past that point the browser-side onmessage handler does all the work.
+  private openSocket(wsUrl: string, model: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.url);
+      const ws = new WebSocket(wsUrl);
       this.ws = ws;
-      ws.onmessage = (ev) => this.onServerMessage(ev.data);
+      // BinaryType doesn't matter — we use text frames throughout. The
+      // upstream switches to text JSON for all directions per the
+      // BidiGenerateContent spec.
       ws.onerror = () => reject(new Error("WebSocket connection failed"));
       ws.onclose = (ev) => {
         if (this.state !== "ended" && this.state !== "error") {
           this.setState("ended");
-          this.cb.onClosed?.(0);
+          this.cb.onClosed?.(this.elapsedMs());
         }
-        // 4401 = our custom unauth code on the server.
-        if (ev.code === 4401) this.cb.onError?.("not authenticated");
+        if (ev.code === 1008) this.cb.onError?.("ephemeral token rejected (1008)");
       };
       ws.onopen = () => {
-        // The server sends {type:"ready", …} once it has opened the
-        // upstream Gemini Live session. Resolve at that point.
-        const onReady = (data: string) => {
-          try {
-            const m = JSON.parse(data);
-            if (m && m.type === "ready") {
-              ws.removeEventListener("message", listener);
-              this.cb.onReady?.({
-                voice: m.voice, voiceLabel: m.voice_label,
-                model: m.model, requiresGeminiBrain: !!m.requires_gemini_brain,
-              });
-              this.setState("ready");
-              resolve();
-            }
-          } catch { /* drop malformed */ }
-        };
-        const listener = (e: MessageEvent) => onReady(e.data);
-        ws.addEventListener("message", listener, { once: false });
+        // Send Setup. Even though the token is constrained server-side,
+        // the protocol still requires a `setup.model`. Anything else here
+        // is overridden by the constraint, so we keep this minimal.
+        ws.send(JSON.stringify({ setup: { model: `models/${model}` } }));
+      };
+      ws.onmessage = (ev) => {
+        let parsed: unknown;
+        if (typeof ev.data === "string") {
+          try { parsed = JSON.parse(ev.data); } catch { return; }
+        } else if (ev.data instanceof Blob) {
+          // The constrained endpoint sometimes responds as a Blob the very
+          // first message (the setupComplete ack). Read it and forward to
+          // the same dispatcher.
+          ev.data.text().then((txt) => {
+            try { this.onServerMessage(JSON.parse(txt)); } catch { /* drop */ }
+          });
+          return;
+        } else {
+          return;
+        }
+        const obj = parsed as Record<string, unknown>;
+        if ("setupComplete" in obj) {
+          resolve();
+          return;
+        }
+        this.onServerMessage(parsed);
       };
     });
+  }
+
+  private onServerMessage(msg: unknown) {
+    const m = msg as GeminiServerContent & GeminiToolCall;
+    if (m.serverContent) {
+      const sc = m.serverContent;
+      if (sc.modelTurn?.parts) {
+        for (const part of sc.modelTurn.parts) {
+          const b64 = part.inlineData?.data;
+          if (b64) this.schedulePlayback(b64);
+        }
+      }
+      const ti = sc.inputTranscription?.text;
+      if (ti) {
+        this.transcript.push({ role: "user", text: ti });
+        this.cb.onTranscript?.({ role: "user", text: ti });
+      }
+      const to = sc.outputTranscription?.text;
+      if (to) {
+        this.transcript.push({ role: "assistant", text: to });
+        this.cb.onTranscript?.({ role: "assistant", text: to });
+      }
+    }
+    if (m.toolCall?.functionCalls) {
+      void this.handleToolCalls(m.toolCall.functionCalls);
+    }
+  }
+
+  private async handleToolCalls(
+    calls: Array<{ id?: string; name: string; args?: Record<string, unknown> }>,
+  ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const responses: Array<{ id?: string; name: string; response: unknown }> = [];
+    for (const c of calls) {
+      this.cb.onToolCall?.(c.name, c.args ?? {});
+      try {
+        const r = await api.runVoiceTool(this.companyId, this.agentId, {
+          session_id: this.sessionId,
+          call_id: c.id,
+          name: c.name,
+          arguments: c.args ?? {},
+        });
+        responses.push({ id: c.id, name: c.name, response: r.response });
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        responses.push({ id: c.id, name: c.name, response: { error: err } });
+      }
+    }
+    try {
+      this.ws.send(JSON.stringify({
+        toolResponse: { functionResponses: responses },
+      }));
+    } catch { /* WS may have closed between tool exec and reply */ }
   }
 
   private async startMic(): Promise<void> {
@@ -138,7 +255,6 @@ export class VoiceSession {
     });
     node.port.onmessage = (ev) => this.onMicFrame(ev.data);
     source.connect(node);
-    // No need to connect to destination — we don't want to hear ourselves.
     this.micCtx = ctx;
     this.micNode = node;
   }
@@ -147,33 +263,26 @@ export class VoiceSession {
     if (data.level != null) this.cb.onMicLevel?.(data.level);
     if (!data.pcm) return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // Half-duplex gate: while the agent is speaking, mute the mic
+    // upstream. Browser AEC can't see our scheduled BufferSource playback,
+    // so without this the mic captures the speakers, Gemini's VAD never
+    // closes the user turn, and the call appears "stuck".
+    if (this.isAgentSpeaking()) return;
     const bytes = new Uint8Array(data.pcm);
     const b64 = arrayBufferToBase64(bytes);
-    this.ws.send(JSON.stringify({ type: "audio", data: b64 }));
+    // BidiGenerateContentRealtimeInput. The mime_type tells Gemini exactly
+    // how to interpret the bytes — we send PCM16 LE @ 16kHz.
+    this.ws.send(JSON.stringify({
+      realtimeInput: {
+        audio: { data: b64, mimeType: "audio/pcm;rate=16000" },
+      },
+    }));
   }
 
-  private onServerMessage(raw: string) {
-    let msg: any;
-    try { msg = JSON.parse(raw); } catch { return; }
-    switch (msg.type) {
-      case "audio":
-        this.schedulePlayback(msg.data);
-        break;
-      case "transcript":
-        if (msg.text) this.cb.onTranscript?.({ role: msg.role, text: msg.text });
-        break;
-      case "tool_call":
-        this.cb.onToolCall?.(msg.name, msg.arguments ?? {});
-        break;
-      case "error":
-        this.cb.onError?.(msg.message ?? "unknown error");
-        this.setState("error");
-        break;
-      case "closed":
-        this.setState("ended");
-        this.cb.onClosed?.(msg.duration_ms ?? 0);
-        break;
-    }
+  private isAgentSpeaking(): boolean {
+    if (!this.outCtx) return false;
+    const grace = 0.15; // seconds — avoids clipping the last syllable
+    return this.outNextStartTime > this.outCtx.currentTime + grace;
   }
 
   private async schedulePlayback(b64: string) {
@@ -197,18 +306,28 @@ export class VoiceSession {
 
   endTurn() {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "end_turn" }));
+      // Manual end-of-utterance. Optional — the model's VAD will close
+      // the turn on its own when the mic goes quiet.
+      this.ws.send(JSON.stringify({ realtimeInput: { activityEnd: {} } }));
     }
   }
 
   async close(): Promise<void> {
-    try {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "bye" }));
-      }
-    } catch { /* ignore */ }
+    const durationMs = this.elapsedMs();
+    try { this.ws?.close(); } catch { /* ignore */ }
     this.cleanup();
     this.setState("ended");
+    // Best-effort transcript persistence. We don't await this in the
+    // critical path because the modal closes synchronously.
+    if (this.sessionId && (this.transcript.length || durationMs > 1000)) {
+      void api.submitVoiceTranscript(this.companyId, this.agentId, {
+        session_id: this.sessionId,
+        duration_ms: Math.round(durationMs),
+        model: this.model,
+        turns: this.transcript,
+      }).catch(() => { /* persistence is best-effort */ });
+    }
+    this.cb.onClosed?.(durationMs);
   }
 
   private cleanup() {
@@ -222,6 +341,10 @@ export class VoiceSession {
     this.micStream = null;
     this.outCtx = null;
     this.ws = null;
+  }
+
+  private elapsedMs(): number {
+    return this.startedAtMs ? performance.now() - this.startedAtMs : 0;
   }
 }
 

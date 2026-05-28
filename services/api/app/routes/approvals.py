@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -13,6 +16,8 @@ from pydantic import BaseModel, Field
 from app import bus
 from app.auth import CurrentAccount
 from app.db import acquire
+
+log = logging.getLogger("trademaster.approvals")
 
 router = APIRouter(prefix="/companies/{company_id}", tags=["approvals"])
 
@@ -248,6 +253,129 @@ async def approve_intent(
                 intent_id,
             )
     return _row(full)
+
+
+class CloseResult(BaseModel):
+    intent_id: UUID
+    contract_id: int
+    sold_for_usd: float
+    realized_pnl_usd: float
+    balance_after_usd: float
+
+
+@router.post("/intents/{intent_id}/close", response_model=CloseResult)
+async def close_intent(
+    company_id: UUID, intent_id: UUID, account_id: CurrentAccount,
+):
+    """Manual close of an open position. RPCs the gateway's `deriv.sell.req`,
+    writes the close back into trade_intents the same way the broker-push
+    path does, and returns the broker's settlement numbers.
+
+    Idempotent: a second call on a closed intent returns 409 (the
+    closed_at IS NULL guard in execution._on_closed also prevents
+    double-stamping if a broker push races us)."""
+    async with acquire() as conn:
+        role = await _ensure_member(conn, company_id, account_id)
+        if role not in WRITE_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient role")
+        row = await conn.fetchrow(
+            """
+            SELECT id, broker_contract_id, buy_price_usd, closed_at, status
+            FROM trade_intents
+            WHERE id = $1 AND company_id = $2
+            """,
+            intent_id, company_id,
+        )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "intent not found")
+    if row["closed_at"] is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "intent already closed")
+    if row["status"] != "executed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"intent status is {row['status']}; only executed intents can be closed",
+        )
+    if not row["broker_contract_id"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no broker_contract_id on intent (was it actually executed?)",
+        )
+
+    try:
+        contract_id = int(row["broker_contract_id"])
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "broker_contract_id is not numeric",
+        )
+
+    nc = bus.nc()
+    if nc is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "trade bus not connected",
+        )
+
+    payload = json.dumps({"contract_id": contract_id, "price": 0}).encode()
+    try:
+        reply = await nc.request("deriv.sell.req", payload, timeout=25)
+    except asyncio.TimeoutError:
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "sell timed out")
+    try:
+        result = json.loads(reply.data)
+    except Exception:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "malformed sell reply")
+    if "error" in result:
+        # Surface Deriv's reason verbatim — e.g. "ContractAlreadySold" tells
+        # the user the broker already settled while they were clicking.
+        raise HTTPException(status.HTTP_409_CONFLICT, f"deriv: {result['error']}")
+
+    sold_for = float(result.get("sold_for") or 0.0)
+    balance_after = float(result.get("balance_after") or 0.0)
+    realized = round(sold_for - float(row["buy_price_usd"] or 0.0), 2)
+
+    # Apply the close in this request so the row disappears on the very
+    # next dashboard poll. The `closed_at IS NULL` guard makes this
+    # idempotent: if the broker's own push raced ahead, our UPDATE is a
+    # 0-row no-op and we skip the postmortem trigger (the consumer will
+    # have fired it). If we win, we trigger it ourselves.
+    from app import postmortem  # local import — avoids a cycle on startup
+    async with acquire() as conn:
+        upd = await conn.execute(
+            """
+            UPDATE trade_intents
+            SET realized_pnl_usd = $2,
+                exit_reason = 'user_close',
+                closed_at = now()
+            WHERE id = $1 AND closed_at IS NULL
+            """,
+            intent_id, realized,
+        )
+    we_closed = not upd.endswith(" 0")
+    if we_closed:
+        asyncio.create_task(postmortem.generate(intent_id))
+    # Still publish — other listeners (safety monitor, etc.) subscribe to
+    # trades.closed.>; they'd otherwise miss user closes entirely.
+    close_ev = {
+        "intent_id": str(intent_id),
+        "company_id": str(company_id),
+        "contract_id": contract_id,
+        "realized_pnl_usd": realized,
+        "exit_reason": "user_close",
+        "status": "sold",
+    }
+    try:
+        await nc.publish(
+            f"trades.closed.{company_id}", json.dumps(close_ev).encode(),
+        )
+    except Exception:
+        log.exception("publish manual-close event failed")
+
+    return CloseResult(
+        intent_id=intent_id,
+        contract_id=contract_id,
+        sold_for_usd=sold_for,
+        realized_pnl_usd=realized,
+        balance_after_usd=balance_after,
+    )
 
 
 @router.post("/approvals/{intent_id}/reject", response_model=TradeIntent)

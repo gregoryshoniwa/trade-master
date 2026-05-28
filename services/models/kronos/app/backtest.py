@@ -1,25 +1,26 @@
-"""Walk-forward backtest for the TTM forecaster.
+"""Walk-forward backtest for the Kronos forecaster.
 
-The single most important question this answers: **does TTM actually have
-directional edge on a given instrument, before we risk money on it?**
+Same question the TTM backtest answers, asked of the OHLCV K-line model:
+**does Kronos actually have directional edge on a given instrument, before
+we risk money on it?**
 
-It pulls historical candles from Deriv (no auth — public `ticks_history`),
-slides the model across them, and for every forecast compares the predicted
-direction H steps ahead against what the price actually did. It reports:
+We pull historical OHLCV candles from Deriv's public `ticks_history`, slide
+the model across them, and for every forecast compare the predicted
+direction H steps ahead against what the price actually did. Output:
 
-  - directional hit-rate (overall + per confidence bucket + at trade floors)
+  - directional hit-rate (overall + per confidence bucket)
   - Brier score (is the confidence honest, or just noise?)
-  - a spread-free P&L simulation using the live stop/target logic
+  - sim P&L using the live stop/target logic (no spread/fees — optimistic)
 
-Run it (model weights are already cached in the ttm image):
+Run it (model weights are cached in the kronos image):
 
-  docker compose run --rm ttm python -m app.backtest \
-      --symbols frxEURUSD,frxXAUUSD,cryBTCUSD \
-      --granularity 60 --count 5000 --horizon 60 --stride 3
+  docker compose run --rm kronos python -m app.backtest \\
+      --symbols frxEURUSD,frxXAUUSD,cryBTCUSD \\
+      --granularity 60 --count 5000 --horizon 12 --stride 3
 
-A hit-rate near 50% means no edge (a coin flip) — expected for random-walk
-synthetics. We want to see hit-rate climbing as the confidence floor rises;
-that's the signature of a model that knows when it knows.
+A hit-rate near 50% means no edge (a coin flip). We want it climbing as the
+confidence floor rises — that's the signature of a model that knows when
+it knows.
 """
 
 from __future__ import annotations
@@ -34,10 +35,10 @@ import numpy as np
 import websockets
 
 from app.config import settings
-from app.ttm_forecaster import make_default_forecaster
+from app.kronos_forecaster import make_default_forecaster
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
-log = logging.getLogger("trademaster.backtest")
+log = logging.getLogger("trademaster.kronos.backtest")
 
 # Deriv's public demo app_id — fine for unauthenticated historical data.
 DERIV_WS = "wss://ws.derivws.com/websockets/v3?app_id=1089"
@@ -47,8 +48,9 @@ DEFAULT_STOP_PCT = 0.005   # 0.5%
 DEFAULT_PAYOFF = 1.5       # target = stop_pct * payoff
 
 
-async def fetch_candles(symbol: str, granularity: int, count: int) -> np.ndarray:
-    """Fetch `count` candles at `granularity` seconds; return close prices."""
+async def fetch_ohlcv(symbol: str, granularity: int, count: int) -> list[dict]:
+    """Fetch `count` OHLCV bars at `granularity` seconds. Each row is the
+    dict shape Kronos consumes (t/open/high/low/close/volume)."""
     req = {
         "ticks_history": symbol,
         "end": "latest",
@@ -61,35 +63,52 @@ async def fetch_candles(symbol: str, granularity: int, count: int) -> np.ndarray
         while True:
             msg = json.loads(await ws.recv())
             if msg.get("msg_type") == "candles":
-                candles = msg["candles"]
-                return np.array([float(c["close"]) for c in candles], dtype=np.float64)
+                # Deriv's candles don't carry volume on FX/synthetics, so we
+                # fall back to 1.0 — Kronos still encodes the row, the
+                # tokenizer just sees a flat volume series.
+                return [
+                    {
+                        "t": int(c["epoch"]),
+                        "open": float(c["open"]),
+                        "high": float(c["high"]),
+                        "low": float(c["low"]),
+                        "close": float(c["close"]),
+                        "volume": float(c.get("volume") or 1.0),
+                    }
+                    for c in msg["candles"]
+                ]
             if msg.get("error"):
                 raise RuntimeError(f"{symbol}: {msg['error']['message']}")
 
 
 def evaluate(
     forecaster,
-    closes: np.ndarray,
+    bars: list[dict],
     *,
     horizon: int,
     stride: int,
     stop_pct: float,
     payoff: float,
 ) -> dict:
-    """Walk-forward over `closes`. At each decision point t we feed the model
-    closes[..t], read its direction/confidence at `horizon` steps ahead, and
-    score it against the realised path closes[t+1 .. t+horizon]."""
+    """Walk-forward over `bars`. At each decision point t we feed the model
+    bars[..t], read its direction/confidence at `horizon` steps ahead, and
+    score it against the realised path of closes from bars[t+1..t+horizon]."""
     ctx = forecaster.context_length
-    n = len(closes)
+    n = len(bars)
     horizon = min(horizon, forecaster.prediction_length)
+
+    closes = np.array([b["close"] for b in bars], dtype=np.float64)
 
     rows: list[dict] = []
     for t in range(ctx - 1, n - horizon, stride):
-        window = closes[t - ctx + 1 : t + 1]
+        window = bars[t - ctx + 1 : t + 1]
         entry = float(closes[t])
-        res = forecaster.forecast(window)
+        try:
+            res = forecaster.forecast(window)
+        except Exception as e:
+            log.warning("forecast failed at t=%d: %s", t, e)
+            continue
         p50 = np.asarray(res["p50"], dtype=np.float64)
-        # Direction at our chosen horizon (model gives the full p50 path).
         pred_delta = float(p50[horizon - 1] - entry)
         pred_dir = "flat" if abs(pred_delta) < 1e-12 else ("up" if pred_delta > 0 else "down")
         conf = float(res["confidence"])
@@ -98,10 +117,6 @@ def evaluate(
         actual_delta = float(future[-1] - entry)
         actual_dir = "flat" if abs(actual_delta) < 1e-12 else ("up" if actual_delta > 0 else "down")
 
-        # P&L: enter in predicted direction, exit on stop/target if touched
-        # within the horizon window, else mark out at the horizon close.
-        # Returns are in fraction-of-price (spread/fees excluded — this is an
-        # upper bound on a real strategy, deliberately optimistic).
         pnl = _simulate(pred_dir, entry, future, stop_pct, payoff) if pred_dir != "flat" else 0.0
 
         rows.append({
@@ -116,6 +131,8 @@ def evaluate(
 
 
 def _simulate(direction: str, entry: float, future: np.ndarray, stop_pct: float, payoff: float) -> float:
+    """First-touch P&L: ride a position from `entry` until stop or target is
+    crossed, else mark to the final close. Returns fraction-of-price (signed)."""
     long = direction == "up"
     if long:
         stop, target = entry * (1 - stop_pct), entry * (1 + stop_pct * payoff)
@@ -132,7 +149,6 @@ def _simulate(direction: str, entry: float, future: np.ndarray, stop_pct: float,
                 return -stop_pct
             if px <= target:
                 return stop_pct * payoff
-    # No touch — mark to the final close as a signed return.
     ret = (float(future[-1]) - entry) / entry
     return ret if long else -ret
 
@@ -144,10 +160,8 @@ def _summarize(rows: list[dict], stop_pct: float, payoff: float) -> dict:
         return {"n": 0}
 
     hit = sum(r["correct"] for r in directional) / n
-    # Brier: confidence as P(correct). outcome 1/0.
     brier = float(np.mean([(r["conf"] - (1.0 if r["correct"] else 0.0)) ** 2 for r in directional]))
 
-    # Hit-rate at rising confidence floors — the key diagnostic.
     floors = [0.0, 0.2, 0.3, 0.4, 0.5]
     by_floor = []
     for f in floors:
@@ -213,18 +227,18 @@ async def run_for_symbols(
     per_symbol: list[dict] = []
     for sym in symbols:
         try:
-            closes = await fetch_candles(sym, granularity, count)
+            bars = await fetch_ohlcv(sym, granularity, count)
         except Exception as e:
             per_symbol.append({"symbol": sym, "error": str(e)})
             continue
-        if len(closes) < forecaster.context_length + horizon:
+        if len(bars) < forecaster.context_length + horizon:
             per_symbol.append({
                 "symbol": sym,
-                "error": f"only {len(closes)} candles, need {forecaster.context_length + horizon}",
+                "error": f"only {len(bars)} candles, need {forecaster.context_length + horizon}",
             })
             continue
         m = await asyncio.to_thread(
-            evaluate, forecaster, closes,
+            evaluate, forecaster, bars,
             horizon=horizon, stride=stride,
             stop_pct=stop_pct, payoff=payoff,
         )
@@ -232,14 +246,12 @@ async def run_for_symbols(
         per_symbol.append(m)
 
     return _aggregate(per_symbol, symbols, granularity, count, horizon, stride, stop_pct, payoff,
-                       model_key="ttm-granite-r2")
+                       model_key=settings.model_label)
 
 
 def _aggregate(per_symbol, symbols, granularity, count, horizon, stride, stop_pct, payoff, *, model_key):
-    """Aggregate per-symbol metrics into a single summary, plus pick the
-    confidence floor that the api's 'apply' action recommends. The picked
-    floor is the lowest one whose hit-rate clears 53% AND keeps at least
-    100 signals — strong enough to act on, not so aggressive it dries up."""
+    """Aggregate per-symbol metrics. Same shape and rules as the TTM
+    backtest — keeps the api's apply-recommendation logic model-agnostic."""
     ok = [s for s in per_symbol if s.get("n", 0) > 0]
     n_total = sum(s["n"] for s in ok)
     if n_total == 0:
@@ -269,13 +281,8 @@ def _aggregate(per_symbol, symbols, granularity, count, horizon, stride, stop_pc
                 "floor": f, "n": fp["n"],
                 "hit": fp["hits"] / fp["n"], "pnl": fp["pnl"],
             })
-        # Recommendation rule: floors with hit ≥ 0.53 and n ≥ 100. Pick the
-        # one with the strongest hit-rate. None if no floor qualifies — UI
-        # surfaces "no clear edge".
         candidates = [b for b in merged_floors if b["hit"] >= 0.53 and b["n"] >= 100]
         best_floor = max(candidates, key=lambda b: b["hit"]) if candidates else None
-        # Symbols where the model is worse than coin-flip with reasonable N —
-        # the apply action can prune them from the agent's allowed_assets.
         weak_symbols = [
             s["symbol"] for s in ok
             if s.get("hit") is not None and s["hit"] < 0.48 and s["n"] >= 50
@@ -304,12 +311,13 @@ def _aggregate(per_symbol, symbols, granularity, count, horizon, stride, stop_pc
 async def run(args: argparse.Namespace) -> None:
     """CLI entry — prints a human-readable report."""
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
-    print(f"Loading TTM ({settings.model_repo}) …", file=sys.stderr)
+    print(f"Loading Kronos ({settings.model_repo}) …", file=sys.stderr)
     fc = make_default_forecaster()
     fc.load()
 
     print("\n" + "=" * 64)
-    print(f"  TTM walk-forward backtest  ·  stop {args.stop_pct*100:.2f}% / payoff {args.payoff}×")
+    print(f"  Kronos walk-forward backtest  ·  stop {args.stop_pct*100:.2f}% / payoff {args.payoff}×")
+    print(f"  model={settings.model_label}  ctx={fc.context_length}  horizon={args.horizon}/{fc.prediction_length}")
     print(f"  (P&L excludes spread+fees — optimistic upper bound)")
     print("=" * 64)
 
@@ -338,12 +346,12 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="TTM walk-forward backtest")
+    p = argparse.ArgumentParser(description="Kronos walk-forward backtest")
     p.add_argument("--symbols", default="frxEURUSD,frxXAUUSD,cryBTCUSD",
                    help="comma-separated Deriv symbols")
     p.add_argument("--granularity", type=int, default=60, help="candle seconds")
     p.add_argument("--count", type=int, default=5000, help="candles to fetch (≤5000)")
-    p.add_argument("--horizon", type=int, default=60,
+    p.add_argument("--horizon", type=int, default=12,
                    help="steps ahead to score (≤ model prediction_length)")
     p.add_argument("--stride", type=int, default=3,
                    help="evaluate every Nth window (speed vs coverage)")

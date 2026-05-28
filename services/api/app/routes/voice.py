@@ -1,51 +1,59 @@
-"""Per-agent Gemini Live voice proxy.
+"""Per-agent Gemini Live voice — ephemeral-token, browser-direct.
 
-Three endpoints:
+We follow Google's recommended production pattern for Live API
+(https://ai.google.dev/gemini-api/docs/ephemeral-tokens):
 
-  GET  /companies/{cid}/agents/{aid}/voice/session   — metadata for the modal
-  WS   /companies/{cid}/agents/{aid}/voice/connect   — bidirectional audio
-  GET  /llm/voices                                    — curated voice catalog
+  1. Browser asks the api for a session.
+  2. Api mints a short-lived ephemeral token, bound (`live_connect_constraints`)
+     to this agent's exact model + voice + system prompt + tools. The api's
+     long-lived GEMINI_API_KEY never leaves the server.
+  3. Browser opens a WSS *directly* to
+     `wss://generativelanguage.googleapis.com/.../BidiGenerateContentConstrained?access_token=<token>`.
+     No more api WS proxy — which means no more "localhost:8000 WS not
+     reachable from a tunneled browser" failure mode, and one fewer hop of
+     audio latency.
+  4. When the model calls a function, the browser POSTs the args to our
+     `POST /voice/tool` so the tool runs in-process with the user's auth
+     context, then sends `toolResponse` back over the same WSS it owns.
+  5. On hang-up, the browser POSTs the assembled transcript to our
+     `POST /voice/transcript` for `conversation_messages` + mem0 + usage
+     accounting.
 
-The browser opens the WS to *us*, not directly to Google. We hold the
-GEMINI_API_KEY and open the Gemini Live WSS server-side. Tool calls fire
-in-process. The browser only ever talks to localhost.
+Endpoints exposed here:
 
-Wire protocol (text frames, JSON-tagged):
+  GET  /llm/voices                                — voice catalog
+  POST /companies/{cid}/agents/{aid}/voice/session — mint ephemeral token
+  POST /companies/{cid}/agents/{aid}/voice/tool    — run one tool call
+  POST /companies/{cid}/agents/{aid}/voice/transcript — persist + usage at end
 
-  browser → api:
-    {type: "audio", data: <base64 PCM int16 16kHz mono>}
-    {type: "end_turn"}                       — explicit end-of-utterance
-    {type: "bye"}                            — close cleanly
-
-  api → browser:
-    {type: "ready", voice, model, requires_gemini_brain}
-    {type: "audio", data: <base64 PCM int16 24kHz mono>}
-    {type: "transcript", role: "user"|"assistant", text}
-    {type: "tool_call", name, arguments}     — informational
-    {type: "error", message}
-    {type: "closed"}
+The previous WebSocket-proxy implementation lived at `WS /voice/connect`;
+it's gone now. Same reason same-origin proxying was abandoned earlier — it
+broke the moment the dashboard was reached through anything that didn't
+forward port 8000 transparently to WS upgrades.
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
+import datetime as dt
 import json
 import logging
 import os
+import urllib.parse
 import uuid
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-import asyncpg
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from google import genai
+from google.genai import types
+from pydantic import BaseModel, Field
 
-from app.auth import CurrentAccount, decode_session_jwt
-from app.memory import memory_service
+from app.auth import CurrentAccount
 from app.db import acquire
 from app.llm import voices
-from app.llm.gemini_live import build_session_config, get_client, pick_model
+from app.llm.gemini_adapter import _clean_schema
+from app.llm.gemini_live import pick_model
+from app.memory import memory_service
 from app.routes.chat import _build_system_prompt, _ensure_member, _load_agent
 from app.tools import ToolContext, available_tools, execute_tool
 from app.usage import record as record_usage
@@ -55,18 +63,38 @@ log = logging.getLogger("trademaster.voice")
 router = APIRouter(prefix="/companies/{company_id}/agents/{agent_id}", tags=["voice"])
 voices_router = APIRouter(prefix="/llm", tags=["voice"])
 
+# Constrained-token BidiGenerateContent endpoint. Locked to v1alpha because
+# (a) auth_tokens.create only exists there, and (b) the Constrained variant
+# is also v1alpha-only.
+LIVE_WSS_BASE = (
+    "wss://generativelanguage.googleapis.com/ws/"
+    "google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained"
+)
+
+# Token lifetimes. Google's defaults are 1 min to open + 30 min to talk; we
+# match the defaults because users typically click "Call" right after the
+# modal shows, and the longest hands-free chat we've seen in testing is ~10
+# min. Bumping these doesn't make security worse — the token is bound to a
+# single session config — but it makes a forgotten token live longer.
+TOKEN_OPEN_WINDOW = dt.timedelta(minutes=2)
+TOKEN_SESSION_WINDOW = dt.timedelta(minutes=30)
+
 
 # ───────────────────────── schemas ──────────────────────────
 
 
-class VoiceSessionInfo(BaseModel):
+class VoiceSessionOut(BaseModel):
     available: bool
+    session_id: str
+    token: str | None = None
+    ws_url: str | None = None
+    model: str
     voice_name: str
     voice_label: str
     voice_feel: str
-    model: str
-    requires_gemini_brain: bool   # True when text brain ≠ Gemini Live
-    agent_brain_label: str        # e.g. "claude-sonnet-4-6"
+    requires_gemini_brain: bool
+    agent_brain_label: str
+    expire_time: str | None = None
 
 
 class VoiceDefOut(BaseModel):
@@ -74,6 +102,37 @@ class VoiceDefOut(BaseModel):
     label: str
     feel: str
     description: str
+
+
+class ToolCallIn(BaseModel):
+    session_id: str
+    call_id: str | None = None
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCallOut(BaseModel):
+    call_id: str | None
+    name: str
+    response: Any
+
+
+class TranscriptTurnIn(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class TranscriptIn(BaseModel):
+    session_id: str
+    duration_ms: int = 0
+    model: str
+    turns: list[TranscriptTurnIn] = Field(default_factory=list)
+
+
+class TranscriptOut(BaseModel):
+    persisted: bool
+    user_chars: int
+    assistant_chars: int
 
 
 # ───────────────────────── catalog ──────────────────────────
@@ -91,82 +150,71 @@ async def list_voices(account_id: CurrentAccount):
     }
 
 
-# ───────────────────────── session metadata ──────────────────────────
+# ───────────────────────── session mint ──────────────────────────
 
 
-@router.get("/voice/session", response_model=VoiceSessionInfo)
-async def voice_session_info(
-    company_id: UUID, agent_id: UUID, account_id: CurrentAccount,
-):
-    if not os.getenv("GEMINI_API_KEY"):
-        # Surface the unavailable state cleanly instead of 500'ing.
-        return VoiceSessionInfo(
-            available=False, voice_name="", voice_label="", voice_feel="",
-            model="", requires_gemini_brain=True, agent_brain_label="",
-        )
-    async with acquire() as conn:
-        await _ensure_member(conn, company_id, account_id)
-        agent = await _load_agent(conn, company_id, agent_id)
-    model, swap = pick_model(dict(agent))
-    voice = voices.get(agent["voice_id"])
-    return VoiceSessionInfo(
-        available=True,
-        voice_name=voice.name, voice_label=voice.label, voice_feel=voice.feel,
-        model=model, requires_gemini_brain=swap,
-        agent_brain_label=f"{agent['llm_provider']}/{agent['llm_model']}",
+def _tool_declarations() -> list[types.Tool] | None:
+    tools = available_tools()
+    if not tools:
+        return None
+    return [
+        types.Tool(function_declarations=[
+            types.FunctionDeclaration(
+                name=t.name,
+                description=t.description,
+                parameters=_clean_schema(t.parameters),
+            )
+            for t in tools
+        ]),
+    ]
+
+
+def _build_live_config(
+    *, agent: dict[str, Any], system_prompt: str, voice_name: str,
+) -> types.LiveConnectConfig:
+    return types.LiveConnectConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name),
+            ),
+        ),
+        system_instruction=types.Content(parts=[types.Part(text=system_prompt)]),
+        tools=_tool_declarations(),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
 
-# ───────────────────────── WebSocket proxy ──────────────────────────
-
-
-@router.websocket("/voice/connect")
-async def voice_connect(
-    websocket: WebSocket,
-    company_id: UUID,
-    agent_id: UUID,
+@router.post("/voice/session", response_model=VoiceSessionOut)
+async def mint_voice_session(
+    company_id: UUID, agent_id: UUID, account_id: CurrentAccount,
 ):
-    """Bidirectional WS proxy between browser and Gemini Live."""
-    # Auth (cookies arrive on the WS upgrade; FastAPI doesn't run Depends
-    # automatically for WS, so we decode manually).
-    cookie = websocket.cookies.get("tm_session")
-    if not cookie:
-        await websocket.close(code=4401, reason="not authenticated")
-        return
-    try:
-        account_id = decode_session_jwt(cookie)
-    except HTTPException as e:
-        await websocket.close(code=4401, reason=e.detail)
-        return
+    """Mint an ephemeral Gemini Live token bound to this agent's session.
+
+    The token expires in ~2 min for opening + 30 min once opened; it can
+    only ever open *this* agent's session — different model/voice/prompt/tools
+    can't be requested with the same token because they're locked into the
+    `live_connect_constraints`. The browser then connects to Gemini WSS
+    directly using `access_token=<token>`."""
+    if not os.getenv("GEMINI_API_KEY"):
+        # Surface unavailable cleanly so the modal can show a real message.
+        return VoiceSessionOut(
+            available=False, session_id=uuid.uuid4().hex,
+            model="", voice_name="", voice_label="", voice_feel="",
+            requires_gemini_brain=True, agent_brain_label="",
+        )
 
     async with acquire() as conn:
-        try:
-            await _ensure_member(conn, company_id, account_id)
-            agent = await _load_agent(conn, company_id, agent_id)
-        except HTTPException as e:
-            await websocket.accept()
-            await websocket.send_json({"type": "error", "message": e.detail})
-            await websocket.close(code=4404)
-            return
+        await _ensure_member(conn, company_id, account_id)
+        agent = await _load_agent(conn, company_id, agent_id)
 
-    if not os.getenv("GEMINI_API_KEY"):
-        await websocket.accept()
-        await websocket.send_json({
-            "type": "error",
-            "message": "voice unavailable: GEMINI_API_KEY not set on the api",
-        })
-        await websocket.close(code=1011)
-        return
-
-    # Build the Gemini Live session.
     model, requires_swap = pick_model(dict(agent))
     voice = voices.get(agent["voice_id"])
 
-    # Recall mem0 + build prompt. We pass an empty query so the agent at
-    # least gets the most-relevant memories; a future iteration could
-    # update recall live as the user speaks.
-    company_row = await _get_company_name(company_id)
-    user_row = await _get_user(account_id, company_id)
+    # Pull a few memories so the system prompt feels continuous across
+    # sessions. Empty query gets the most-relevant; future iteration could
+    # update live.
     memories = []
     try:
         memories = await memory_service.search(
@@ -176,181 +224,138 @@ async def voice_connect(
     except Exception:
         log.debug("mem0 recall failed; continuing without")
 
+    company_row = await _get_company_name(company_id)
+    user_row = await _get_user(account_id, company_id)
     system_prompt = _build_system_prompt(
         agent, company_row["name"], user_row.get("full_name"),
         user_row.get("title"), memories,
     )
-    cfg = build_session_config(
-        agent=dict(agent), system_prompt=system_prompt,
-        tools=available_tools(),
+
+    cfg = _build_live_config(
+        agent=dict(agent), system_prompt=system_prompt, voice_name=voice.name,
     )
 
-    session_id = uuid.uuid4().hex
-    tool_ctx = ToolContext(
+    now = dt.datetime.now(tz=dt.timezone.utc)
+    client = genai.Client(
+        api_key=os.environ["GEMINI_API_KEY"],
+        http_options={"api_version": "v1alpha"},
+    )
+    try:
+        token_obj = await client.aio.auth_tokens.create(
+            config=types.CreateAuthTokenConfig(
+                uses=1,
+                expire_time=now + TOKEN_SESSION_WINDOW,
+                new_session_expire_time=now + TOKEN_OPEN_WINDOW,
+                live_connect_constraints=types.LiveConnectConstraints(
+                    model=model, config=cfg,
+                ),
+                http_options={"api_version": "v1alpha"},
+            ),
+        )
+    except Exception as e:
+        log.exception("auth_tokens.create failed")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Gemini token mint failed: {str(e)[:200]}",
+        )
+
+    token_name = getattr(token_obj, "name", None) or ""
+    ws_url = f"{LIVE_WSS_BASE}?access_token={urllib.parse.quote(token_name)}"
+    return VoiceSessionOut(
+        available=True,
+        session_id=uuid.uuid4().hex,
+        token=token_name,
+        ws_url=ws_url,
+        model=model,
+        voice_name=voice.name,
+        voice_label=voice.label,
+        voice_feel=voice.feel,
+        requires_gemini_brain=requires_swap,
+        agent_brain_label=f"{agent['llm_provider']}/{agent['llm_model']}",
+        expire_time=(now + TOKEN_SESSION_WINDOW).isoformat(),
+    )
+
+
+# ───────────────────────── tool exec (browser → api) ──────────────────────────
+
+
+@router.post("/voice/tool", response_model=ToolCallOut)
+async def run_voice_tool(
+    company_id: UUID, agent_id: UUID, account_id: CurrentAccount,
+    body: ToolCallIn,
+):
+    """Run one tool the model called for. Browser sends function name +
+    args; we dispatch through the same tool registry the text chat uses
+    so voice and chat share permissions, scoping, and side-effects."""
+    ctx = ToolContext(
         company_id=company_id, account_id=account_id, agent_id=agent_id,
     )
-
-    await websocket.accept()
-    await websocket.send_json({
-        "type": "ready",
-        "voice": voice.name,
-        "voice_label": voice.label,
-        "model": model,
-        "requires_gemini_brain": requires_swap,
-        "session_id": session_id,
-    })
-
-    transcript_user: list[str] = []
-    transcript_agent: list[str] = []
-    start_ts = asyncio.get_event_loop().time()
-    client = get_client()
-
     try:
-        async with client.aio.live.connect(model=model, config=cfg) as live:
-            log.info(
-                "voice session opened agent=%s voice=%s model=%s session=%s",
-                agent["name"], voice.name, model, session_id,
-            )
-
-            async def pump_browser_to_gemini() -> None:
-                """Forward browser frames to Gemini."""
-                while True:
-                    try:
-                        msg_text = await websocket.receive_text()
-                    except WebSocketDisconnect:
-                        await live.close()
-                        return
-                    try:
-                        msg = json.loads(msg_text)
-                    except Exception:
-                        continue
-                    t = msg.get("type")
-                    if t == "audio":
-                        data = msg.get("data") or ""
-                        try:
-                            raw = base64.b64decode(data)
-                        except Exception:
-                            continue
-                        await live.send_realtime_input(
-                            audio={
-                                "data": raw,
-                                "mime_type": "audio/pcm;rate=16000",
-                            },
-                        )
-                    elif t == "end_turn":
-                        # Tell Gemini the user's utterance is complete.
-                        await live.send_realtime_input(audio_stream_end=True)
-                    elif t == "bye":
-                        await live.close()
-                        return
-
-            async def pump_gemini_to_browser() -> None:
-                """Forward Gemini frames to the browser."""
-                async for resp in live.receive():
-                    # ── audio ─────────────────────────────────────
-                    server_content = getattr(resp, "server_content", None)
-                    if server_content is not None:
-                        model_turn = getattr(server_content, "model_turn", None)
-                        if model_turn is not None:
-                            for part in model_turn.parts or []:
-                                inline = getattr(part, "inline_data", None)
-                                if inline is not None and inline.data:
-                                    b64 = base64.b64encode(inline.data).decode()
-                                    await websocket.send_json({"type": "audio", "data": b64})
-                        # ── transcripts ───────────────────────────
-                        in_t = getattr(server_content, "input_transcription", None)
-                        if in_t is not None and getattr(in_t, "text", None):
-                            transcript_user.append(in_t.text)
-                            await websocket.send_json({
-                                "type": "transcript", "role": "user", "text": in_t.text,
-                            })
-                        out_t = getattr(server_content, "output_transcription", None)
-                        if out_t is not None and getattr(out_t, "text", None):
-                            transcript_agent.append(out_t.text)
-                            await websocket.send_json({
-                                "type": "transcript", "role": "assistant", "text": out_t.text,
-                            })
-
-                    # ── tool calls ────────────────────────────────
-                    tool_call = getattr(resp, "tool_call", None)
-                    if tool_call is not None and tool_call.function_calls:
-                        responses = []
-                        for fc in tool_call.function_calls:
-                            await websocket.send_json({
-                                "type": "tool_call",
-                                "name": fc.name,
-                                "arguments": dict(fc.args) if fc.args else {},
-                            })
-                            result_json = await execute_tool(
-                                fc.name, dict(fc.args) if fc.args else {}, tool_ctx,
-                            )
-                            try:
-                                result = json.loads(result_json)
-                            except Exception:
-                                result = {"raw": result_json}
-                            responses.append({
-                                "id": fc.id,
-                                "name": fc.name,
-                                "response": result,
-                            })
-                        await live.send_tool_response(function_responses=responses)
-
-            await asyncio.gather(
-                pump_browser_to_gemini(),
-                pump_gemini_to_browser(),
-            )
-    except WebSocketDisconnect:
-        pass
+        result_json = await execute_tool(body.name, body.arguments, ctx)
     except Exception as e:
-        log.exception("voice session error")
+        log.exception("voice tool %s failed", body.name)
+        return ToolCallOut(call_id=body.call_id, name=body.name, response={"error": str(e)[:300]})
+    try:
+        result = json.loads(result_json)
+    except Exception:
+        result = {"raw": result_json}
+    return ToolCallOut(call_id=body.call_id, name=body.name, response=result)
+
+
+# ───────────────────────── end-of-session persistence ──────────────────────────
+
+
+@router.post("/voice/transcript", response_model=TranscriptOut)
+async def submit_voice_transcript(
+    company_id: UUID, agent_id: UUID, account_id: CurrentAccount,
+    body: TranscriptIn, bg: BackgroundTasks,
+):
+    """Persist a finished voice session: write conversation_messages,
+    fire-and-forget mem0 update, record cost as `kind="voice"`. Idempotent
+    on no transcript — empty calls just return zeros without polluting
+    chat history."""
+    user_text = " ".join(t.text for t in body.turns if t.role == "user").strip()
+    agent_text = " ".join(t.text for t in body.turns if t.role == "assistant").strip()
+    if not user_text and not agent_text:
+        return TranscriptOut(persisted=False, user_chars=0, assistant_chars=0)
+
+    await _persist_voice_turn(
+        company_id=company_id, account_id=account_id, agent_id=agent_id,
+        user_text=user_text, agent_text=agent_text,
+    )
+
+    # Usage row — duration as the cost proxy because streaming audio doesn't
+    # surface token counts. The registry has a per-second price for the
+    # Live model.
+    try:
+        await record_usage(
+            company_id=company_id, account_id=account_id, agent_id=agent_id,
+            provider="google", model=body.model,
+            input_tokens=max(0, body.duration_ms // 1000), output_tokens=0,
+            latency_ms=body.duration_ms, kind="voice",
+        )
+    except Exception:
+        log.debug("voice usage record failed; continuing")
+
+    # mem0 — best effort, background.
+    async def _mem_add():
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
-        except Exception:
-            pass
-    finally:
-        duration_ms = int((asyncio.get_event_loop().time() - start_ts) * 1000)
-        try:
-            await websocket.send_json({"type": "closed", "duration_ms": duration_ms})
-        except Exception:
-            pass
-        try:
-            await websocket.close()
-        except Exception:
-            pass
-        # Best-effort persistence + cost row. Empty transcripts (user hit
-        # Cancel before speaking) skip both so we don't pollute history.
-        try:
-            user_text = " ".join(transcript_user).strip()
-            agent_text = " ".join(transcript_agent).strip()
-            if user_text or agent_text:
-                await _persist_voice_turn(
+            msgs = []
+            if user_text:  msgs.append({"role": "user", "content": user_text})
+            if agent_text: msgs.append({"role": "assistant", "content": agent_text})
+            if msgs:
+                await memory_service.add_turn(
                     company_id=company_id, account_id=account_id,
-                    agent_id=agent_id, user_text=user_text, agent_text=agent_text,
+                    agent_id=agent_id, messages=msgs, metadata={"voice": True},
                 )
-                # Charge via input_tokens = duration_seconds so the
-                # existing per-1M pricing in registry.py turns it into a
-                # USD value (see "Gemini Live" row there).
-                await record_usage(
-                    company_id=company_id, account_id=account_id,
-                    agent_id=agent_id, provider="google", model=model,
-                    input_tokens=duration_ms // 1000, output_tokens=0,
-                    latency_ms=duration_ms, kind="voice",
-                )
-                # mem0 add — best effort.
-                try:
-                    msgs = []
-                    if user_text:  msgs.append({"role": "user", "content": user_text})
-                    if agent_text: msgs.append({"role": "assistant", "content": agent_text})
-                    if msgs:
-                        await memory_service.add_turn(
-                            company_id=company_id, account_id=account_id,
-                            agent_id=agent_id, messages=msgs,
-                            metadata={"voice": True},
-                        )
-                except Exception:
-                    log.debug("mem0 add (voice) failed; continuing")
         except Exception:
-            log.exception("voice end-of-session persistence failed")
+            log.debug("mem0 add (voice) failed; continuing")
+    bg.add_task(_mem_add)
+
+    return TranscriptOut(
+        persisted=True,
+        user_chars=len(user_text), assistant_chars=len(agent_text),
+    )
 
 
 # ─────────────────────── helpers ───────────────────────
@@ -383,9 +388,6 @@ async def _persist_voice_turn(
     """Save a voice session as a normal conversation_messages turn so it
     shows up in the chat history list."""
     async with acquire() as conn:
-        # Find or create a conversation for this (account, agent) pair so
-        # voice turns mingle with text chat. Mirrors _ensure_conversation
-        # in routes/chat but doesn't need a title hint.
         conv_id = await conn.fetchval(
             """
             SELECT id FROM conversations

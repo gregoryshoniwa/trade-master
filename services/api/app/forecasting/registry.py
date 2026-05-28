@@ -48,10 +48,10 @@ CATALOG: list[ForecastModelDef] = [
         tier="fast",
     ),
     ForecastModelDef(
-        key="kronos-small",
-        label="Kronos-small (K-line foundation model)",
+        key="kronos-base",
+        label="Kronos-base (K-line foundation model)",
         family="kronos",
-        params="24.7M",
+        params="102M",
         license="MIT",
         inputs="OHLCV candles",
         granularity="1-minute bars",
@@ -61,7 +61,8 @@ CATALOG: list[ForecastModelDef] = [
             "NeoQuasar Kronos — a decoder-only autoregressive model built for "
             "financial candlesticks. Consumes full OHLCV; confidence is the "
             "fraction of sampled futures agreeing on direction (honest, not a "
-            "heuristic). Roughly 10× faster than Kronos-base on CPU."
+            "heuristic). We tried -small for the latency win; quality dropped "
+            "Kronny below break-even on real fills, so we're on -base."
         ),
         tier="mid",
     ),

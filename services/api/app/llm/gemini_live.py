@@ -20,18 +20,21 @@ from google.genai import types
 from app.llm.gemini_adapter import _clean_schema
 from app.llm.voices import DEFAULT_VOICE, get as get_voice
 
-# Stable GA model. Native-audio (preview) sounds nicer but is harder to keep
-# pinned across SDK versions — promote later when we want the upgrade.
-LIVE_MODEL_DEFAULT = "gemini-2.0-flash-live-001"
+# Default Live model. The older `gemini-2.0-flash-live-001` was deprecated
+# off v1beta in early 2026 — Google now ships native-audio under the 2.5
+# family. The `-latest` alias rolls forward automatically; we don't have
+# to bump a pin every time a new preview lands.
+LIVE_MODEL_DEFAULT = "gemini-2.5-flash-native-audio-latest"
 
 # Models that support the Live API directly. If the agent's text-chat model
 # is one of these AND the provider is Google, we use the agent's actual
 # model so the voice persona matches the text persona. Otherwise we fall
 # back to LIVE_MODEL_DEFAULT and surface a "voice via Gemini Live" badge.
 LIVE_CAPABLE_MODELS: set[str] = {
-    "gemini-2.0-flash-live-001",
-    "gemini-2.5-flash-live-preview",
-    "gemini-2.5-flash-native-audio-preview",
+    "gemini-2.5-flash-native-audio-latest",
+    "gemini-2.5-flash-native-audio-preview-09-2025",
+    "gemini-2.5-flash-native-audio-preview-12-2025",
+    "gemini-3.1-flash-live-preview",
 }
 
 
