@@ -11,6 +11,19 @@ import {
 } from "lightweight-charts";
 
 import { api } from "@/lib/api";
+import { cssVar, useTheme } from "@/lib/theme";
+
+/** Chart colors derived live from the active theme's CSS variables. */
+function chartColors() {
+  const accent = cssVar("--color-accent") || "#2962FF";
+  const warning = cssVar("--color-warning") || "#FFB74D";
+  const text = cssVar("--color-text-dim") || "#9BA3AF";
+  const border = cssVar("--color-border") || "#252C36";
+  const bg = cssVar("--color-bg-card") || "#161B22";
+  // ~40% alpha band derived from the warning hex.
+  const bandSoft = warning.startsWith("#") && warning.length === 7 ? `${warning}66` : warning;
+  return { accent, warning, text, border, bg, bandSoft };
+}
 
 type TickPayload = {
   symbol: string;
@@ -64,6 +77,7 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
   const [connected, setConnected] = useState(false);
   const [tickCount, setTickCount] = useState(0);
   const [historyRows, setHistoryRows] = useState<number | null>(null);
+  const theme = useTheme();
 
   const fmt = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: decimals,
@@ -74,20 +88,22 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const c = chartColors();
+
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { color: "#0B0E14" },
-        textColor: "#9CA3AF",
+        background: { color: c.bg },
+        textColor: c.text,
         fontFamily:
           'ui-monospace, "JetBrains Mono Variable", "IBM Plex Mono", Menlo, monospace',
       },
       grid: {
-        vertLines: { color: "#1F2937" },
-        horzLines: { color: "#1F2937" },
+        vertLines: { color: c.border },
+        horzLines: { color: c.border },
       },
-      rightPriceScale: { borderColor: "#1F2937" },
+      rightPriceScale: { borderColor: c.border },
       timeScale: {
-        borderColor: "#1F2937",
+        borderColor: c.border,
         timeVisible: true,
         secondsVisible: true,
         rightOffset: 24,
@@ -96,20 +112,20 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
       width: containerRef.current.clientWidth,
       height: 480,
       crosshair: {
-        vertLine: { color: "#A8FF35", labelBackgroundColor: "#A8FF35" },
-        horzLine: { color: "#A8FF35", labelBackgroundColor: "#A8FF35" },
+        vertLine: { color: c.accent, labelBackgroundColor: c.accent },
+        horzLine: { color: c.accent, labelBackgroundColor: c.accent },
       },
     });
 
     const tickSeries = chart.addSeries(LineSeries, {
-      color: "#A8FF35",
+      color: c.accent,
       lineWidth: 2,
-      priceLineColor: "#A8FF35",
+      priceLineColor: c.accent,
       priceLineStyle: 2,
       lastValueVisible: true,
     });
     const p90 = chart.addSeries(LineSeries, {
-      color: "rgba(168, 255, 53, 0.55)",
+      color: c.bandSoft,
       lineWidth: 1,
       lineStyle: 2,
       lastValueVisible: false,
@@ -117,7 +133,7 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
       crosshairMarkerVisible: false,
     });
     const p10 = chart.addSeries(LineSeries, {
-      color: "rgba(168, 255, 53, 0.55)",
+      color: c.bandSoft,
       lineWidth: 1,
       lineStyle: 2,
       lastValueVisible: false,
@@ -125,7 +141,7 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
       crosshairMarkerVisible: false,
     });
     const p50 = chart.addSeries(LineSeries, {
-      color: "#FBBF24",
+      color: c.warning,
       lineWidth: 2,
       lineStyle: 1,
       lastValueVisible: false,
@@ -156,6 +172,28 @@ export default function TickChart({ symbol, wsUrl, decimals = 4, displayName }: 
       p90SeriesRef.current = null;
     };
   }, []);
+
+  // Re-skin the chart when the user flips dark/light. lightweight-charts
+  // doesn't observe CSS-var changes itself; we have to push the new values.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const c = chartColors();
+    chart.applyOptions({
+      layout: { background: { color: c.bg }, textColor: c.text },
+      grid: { vertLines: { color: c.border }, horzLines: { color: c.border } },
+      rightPriceScale: { borderColor: c.border },
+      timeScale: { borderColor: c.border },
+      crosshair: {
+        vertLine: { color: c.accent, labelBackgroundColor: c.accent },
+        horzLine: { color: c.accent, labelBackgroundColor: c.accent },
+      },
+    });
+    tickSeriesRef.current?.applyOptions({ color: c.accent, priceLineColor: c.accent });
+    p50SeriesRef.current?.applyOptions({ color: c.warning });
+    p10SeriesRef.current?.applyOptions({ color: c.bandSoft });
+    p90SeriesRef.current?.applyOptions({ color: c.bandSoft });
+  }, [theme]);
 
   // Symbol change → reset state, load history, reset series
   useEffect(() => {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 
 export default function Nav() {
@@ -18,7 +19,7 @@ export default function Nav() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2 hover:opacity-80">
-            <div className="h-7 w-7 rounded-md bg-bull shadow-glow" />
+            <div className="h-7 w-7 rounded-md bg-accent shadow-glow" />
             <span className="text-base font-semibold tracking-tight">
               TradeMaster
             </span>
@@ -72,7 +73,7 @@ export default function Nav() {
                 <span
                   className="h-2 w-2 rounded-full"
                   style={{
-                    backgroundColor: active.brand_color ?? "#A8FF35",
+                    backgroundColor: active.brand_color ?? "#2962FF",
                   }}
                 />
                 <span>{active.name}</span>
@@ -97,7 +98,7 @@ export default function Nav() {
                     >
                       <span
                         className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: c.brand_color ?? "#A8FF35" }}
+                        style={{ backgroundColor: c.brand_color ?? "#2962FF" }}
                       />
                       <span className="flex-1">{c.name}</span>
                       <span className="num text-xs text-text-mute">{c.role}</span>
@@ -119,6 +120,7 @@ export default function Nav() {
         </div>
 
         <div className="flex items-center gap-3">
+          <ThemeToggle />
           {loading ? (
             <span className="text-xs text-text-mute">…</span>
           ) : me ? (

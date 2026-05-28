@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/lib/auth";
+import { NO_FLASH_INIT } from "@/lib/theme";
 import Nav from "@/components/Nav";
 import "./globals.css";
 
@@ -14,7 +15,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    // `data-theme="dark"` is a safe SSR default; the inline script below
+    // resets it to the user's stored choice / OS preference before paint.
+    <html lang="en" data-theme="dark">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_INIT }} />
+      </head>
       <body className="min-h-screen bg-bg text-text antialiased">
         <AuthProvider>
           <Nav />
