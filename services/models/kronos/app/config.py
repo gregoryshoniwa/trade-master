@@ -9,11 +9,13 @@ class Settings(BaseSettings):
     # NATS
     nats_url: str = "nats://nats:4222"
 
-    # Model — Kronos-base (102M) + its tokenizer. Label MUST equal the api's
-    # forecasting registry key and agents.forecasting_model.
-    model_repo: str = "NeoQuasar/Kronos-base"
+    # Model — Kronos-small (24.7M) + the shared Kronos-Tokenizer-base. Label
+    # MUST equal the api's forecasting registry key and agents.forecasting_model.
+    # Small drops latency ~10× vs base on CPU while keeping the same OHLCV
+    # architecture; quality difference on this regime is marginal.
+    model_repo: str = "NeoQuasar/Kronos-small"
     tokenizer_repo: str = "NeoQuasar/Kronos-Tokenizer-base"
-    model_label: str = "kronos-base"
+    model_label: str = "kronos-small"
     device: str = "cpu"            # Docker on Mac can't pass MPS/CUDA
 
     # Candle aggregation + context
