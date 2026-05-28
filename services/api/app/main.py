@@ -7,12 +7,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import bus, execution
+from app.calendar import start_ingestor as start_calendar
+from app.calendar import stop_ingestor as stop_calendar
 from app.config import settings
 from app.db import close_pool, init_pool
 from app.decision_loop import start_decision_loop, stop_decision_loop
 from app.routes import agents as agents_routes
 from app.routes import approvals as approvals_routes
 from app.routes import auth as auth_routes
+from app.routes import calendar as calendar_routes
 from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
 from app.routes import forecasting as forecasting_routes
@@ -40,9 +43,11 @@ async def lifespan(_: FastAPI):
     await bus.connect()
     await start_decision_loop()
     await execution.start()
+    await start_calendar()
     try:
         yield
     finally:
+        await stop_calendar()
         await execution.stop()
         await stop_decision_loop()
         await bus.close()
@@ -86,3 +91,4 @@ app.include_router(forecasting_routes.router, prefix="/api/v1")
 app.include_router(payroll_routes.router, prefix="/api/v1")
 app.include_router(approvals_routes.router, prefix="/api/v1")
 app.include_router(postmortems_routes.router, prefix="/api/v1")
+app.include_router(calendar_routes.router, prefix="/api/v1")

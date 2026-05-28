@@ -12,7 +12,8 @@ Phase 1 scope:
   - Greed limit after consecutive wins (skipped — same)
   - Stop-loss required (hardcoded)
   - Tier check (asset + contract type unlocked at company tier)
-  - Event-aware blackout (Phase 4 — economic calendar not yet wired)
+  - Event-aware blackout (queries economic_events; -15/+30 min for high
+    impact, -5/+10 min for medium; agent.event_aware=false opts out)
 
 Returns a structured verdict so the UI can surface "why".
 """
@@ -73,7 +74,7 @@ async def evaluate(
         SELECT id, name, is_active, is_paused, pause_reason,
                allocated_balance_usd, max_position_size_usd, max_daily_drawdown_pct,
                max_trades_per_day, min_confidence_threshold,
-               allowed_assets, allowed_contract_types
+               allowed_assets, allowed_contract_types, event_aware
         FROM agents
         WHERE id = $1 AND company_id = $2
         """,
@@ -126,6 +127,33 @@ async def evaluate(
         )
     checks.append(RiskCheck("agent_contract_allowed", True))
 
+    # ── economic-calendar blackout (PLAN §9) ────────────────────
+    # Agents with event_aware=false opt out; high-impact events block trading
+    # ±15/30 min, medium ±5/10. The ingestor populates affected_assets so we
+    # don't need to derive currency-from-symbol here.
+    if agent["event_aware"]:
+        blackout = await conn.fetchrow(
+            """
+            SELECT name, impact, ts FROM economic_events
+            WHERE $1 = ANY(affected_assets)
+              AND (
+                (impact = 'high'   AND ts BETWEEN now() - interval '30 min' AND now() + interval '15 min')
+                OR
+                (impact = 'medium' AND ts BETWEEN now() - interval '10 min' AND now() + interval '5 min')
+              )
+            ORDER BY ts ASC
+            LIMIT 1
+            """,
+            asset,
+        )
+        if blackout is not None:
+            return _fail(
+                f"event blackout: {blackout['name']} ({blackout['impact']})",
+                _add(checks, "event_blackout", False,
+                     detail=f"{blackout['name']} {blackout['impact']} at {blackout['ts'].isoformat()}"),
+            )
+        checks.append(RiskCheck("event_blackout", True))
+
     # ── confidence floor ────────────────────────────────────────
     conf_ok = confidence >= float(agent["min_confidence_threshold"])
     checks.append(RiskCheck(
@@ -148,6 +176,29 @@ async def evaluate(
         detail=f"proposed ${proposed_stake_usd:.2f} → capped ${capped_stake:.2f}"
                f" (agent max ${max_pos:.2f}, global cap ${GLOBAL_MAX_STAKE_USD:.0f})",
     ))
+
+    # ── post-event sizing (PLAN §9) ─────────────────────────────
+    # In the 2 hours after a high-impact event fired on this asset, halve
+    # the stake. We skip this for event_aware=false agents (they opted out).
+    if agent["event_aware"]:
+        recent = await conn.fetchval(
+            """
+            SELECT name FROM economic_events
+            WHERE $1 = ANY(affected_assets)
+              AND impact = 'high'
+              AND ts BETWEEN now() - interval '2 hours' AND now()
+            ORDER BY ts DESC
+            LIMIT 1
+            """,
+            asset,
+        )
+        if recent:
+            reduced = max(GLOBAL_MIN_STAKE_USD, round(capped_stake * 0.5, 2))
+            checks.append(RiskCheck(
+                "post_event_sizing", True,
+                detail=f"50% reduction for 2hr post {recent}: ${capped_stake:.2f} → ${reduced:.2f}",
+            ))
+            capped_stake = reduced
 
     # ── trades-per-day cap ──────────────────────────────────────
     used_today = await conn.fetchval(
