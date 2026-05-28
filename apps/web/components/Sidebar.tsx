@@ -17,6 +17,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/", label: "Dashboard", icon: <DashboardIcon /> },
       { href: "/approvals", label: "Approvals", icon: <CheckIcon /> },
       { href: "/postmortems", label: "Postmortems", icon: <FileIcon /> },
+      { href: "/history", label: "History", icon: <HistoryIcon /> },
       { href: "/calendar", label: "Calendar", icon: <CalendarIcon /> },
     ],
   },
@@ -178,6 +179,9 @@ function CoinIcon() {
 }
 function BarChartIcon() {
   return <svg {...svgProps()}><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
+}
+function HistoryIcon() {
+  return <svg {...svgProps()}><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><line x1="12" y1="7" x2="12" y2="12"/><line x1="12" y1="12" x2="14" y2="13.5"/></svg>;
 }
 function PersonIcon() {
   return <svg {...svgProps()}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;

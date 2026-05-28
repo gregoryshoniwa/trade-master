@@ -334,6 +334,103 @@ func (c *Client) Buy(ctx context.Context, params BuyParams, maxPrice float64) (*
 	}
 }
 
+// StatementTransaction mirrors one row from Deriv's `statement` API. Amount
+// is signed (negative = debit, positive = credit). BalanceAfter is the
+// authoritative running balance at the moment of the transaction.
+type StatementTransaction struct {
+	TransactionID   int64   `json:"transaction_id"`
+	ReferenceID     int64   `json:"reference_id"`
+	ActionType      string  `json:"action_type"` // buy | sell | deposit | withdrawal | adjustment | escrow
+	Amount          float64 `json:"amount"`
+	BalanceAfter    float64 `json:"balance_after"`
+	TransactionTime int64   `json:"transaction_time"`
+	Longcode        string  `json:"longcode,omitempty"`
+	ContractID      int64   `json:"contract_id,omitempty"`
+	Symbol          string  `json:"symbol,omitempty"`
+}
+
+// StatementResult is the parsed `statement` response.
+type StatementResult struct {
+	Count        int                    `json:"count"`
+	Transactions []StatementTransaction `json:"transactions"`
+}
+
+// Statement fetches a page of the authorized account's transaction history.
+// Capped by Deriv at 500 rows per call; paginate with offset.
+func (c *Client) Statement(ctx context.Context, limit, offset int) (StatementResult, error) {
+	if !c.Ready() {
+		return StatementResult{}, fmt.Errorf("trader not ready")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	reqID := c.nextReqID()
+	ch := c.register(reqID)
+	if err := c.send(ctx, map[string]any{
+		"statement":   1,
+		"description": 1,
+		"limit":       limit,
+		"offset":      offset,
+		"req_id":      reqID,
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.pending, reqID)
+		c.mu.Unlock()
+		return StatementResult{}, fmt.Errorf("send statement: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		return StatementResult{}, ctx.Err()
+	case raw := <-ch:
+		var resp struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Statement *struct {
+				Count        int `json:"count"`
+				Transactions []struct {
+					TransactionID   int64   `json:"transaction_id"`
+					ReferenceID     int64   `json:"reference_id"`
+					ActionType      string  `json:"action_type"`
+					Amount          float64 `json:"amount"`
+					BalanceAfter    float64 `json:"balance_after"`
+					TransactionTime int64   `json:"transaction_time"`
+					Longcode        string  `json:"longcode"`
+					ContractID      int64   `json:"contract_id"`
+					Symbol          string  `json:"symbol"`
+				} `json:"transactions"`
+			} `json:"statement"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return StatementResult{}, fmt.Errorf("decode statement: %w", err)
+		}
+		if resp.Error != nil {
+			return StatementResult{}, fmt.Errorf("deriv: %s %s", resp.Error.Code, resp.Error.Message)
+		}
+		if resp.Statement == nil {
+			return StatementResult{}, fmt.Errorf("empty statement response")
+		}
+		out := StatementResult{Count: resp.Statement.Count}
+		for _, t := range resp.Statement.Transactions {
+			out.Transactions = append(out.Transactions, StatementTransaction{
+				TransactionID:   t.TransactionID,
+				ReferenceID:     t.ReferenceID,
+				ActionType:      t.ActionType,
+				Amount:          t.Amount,
+				BalanceAfter:    t.BalanceAfter,
+				TransactionTime: t.TransactionTime,
+				Longcode:        t.Longcode,
+				ContractID:      t.ContractID,
+				Symbol:          t.Symbol,
+			})
+		}
+		return out, nil
+	case <-time.After(20 * time.Second):
+		return StatementResult{}, fmt.Errorf("statement timeout")
+	}
+}
+
 // BalanceUpdate is one server-pushed balance tick from Deriv. Currency stays
 // constant for the session; the value moves as trades open/close and rates
 // settle. We pass it back through onUpdate so callers can publish it.

@@ -354,6 +354,13 @@ export const api = {
 
   // ─── deriv state ───
   getDerivBalance: () => request<DerivBalance>("/api/v1/deriv/balance"),
+  getDerivStatement: (opts?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
+    const qs = q.toString();
+    return request<DerivStatement>(`/api/v1/deriv/statement${qs ? `?${qs}` : ""}`);
+  },
 
   // ─── safety ───
   getSafety: (companyId: string) =>
@@ -557,6 +564,23 @@ export type DerivBalance = {
   balance: number;
   is_virtual: boolean;
   available: boolean;
+};
+
+export type DerivStatementTransaction = {
+  transaction_id: number;
+  reference_id: number;
+  action_type: string; // buy | sell | deposit | withdrawal | adjustment | escrow
+  amount: number;
+  balance_after: number;
+  transaction_time: number;
+  longcode: string | null;
+  contract_id: number;
+  symbol: string | null;
+};
+
+export type DerivStatement = {
+  count: number;
+  transactions: DerivStatementTransaction[];
 };
 
 // ─── safety types ───

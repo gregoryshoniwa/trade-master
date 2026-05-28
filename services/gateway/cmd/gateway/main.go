@@ -18,6 +18,7 @@ import (
 	"github.com/grebles/trade-master/services/gateway/internal/persist"
 	"github.com/grebles/trade-master/services/gateway/internal/trader"
 	"github.com/grebles/trade-master/services/gateway/internal/ws"
+	"github.com/nats-io/nats.go"
 )
 
 func main() {
@@ -83,6 +84,36 @@ func main() {
 	if err := orderRouter.Start(ctx); err != nil {
 		logger.Error("order router failed to start", "err", err)
 		// Non-fatal — ticks + fan-out still work without trading.
+	}
+
+	// NATS request/reply: api sends a `deriv.statement.req` with JSON
+	// {"limit":N,"offset":M}; we call Deriv `statement` and reply with the
+	// JSON-encoded StatementResult. Lets the dashboard show transaction
+	// history without opening its own authorized Deriv connection.
+	_, statementSubErr := nc.Subscribe("deriv.statement.req", func(m *nats.Msg) {
+		var req struct {
+			Limit  int `json:"limit"`
+			Offset int `json:"offset"`
+		}
+		_ = json.Unmarshal(m.Data, &req)
+		reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		defer cancel()
+		if !tradeClient.Ready() {
+			payload, _ := json.Marshal(map[string]any{"error": "trader not ready"})
+			_ = m.Respond(payload)
+			return
+		}
+		res, err := tradeClient.Statement(reqCtx, req.Limit, req.Offset)
+		if err != nil {
+			payload, _ := json.Marshal(map[string]any{"error": err.Error()})
+			_ = m.Respond(payload)
+			return
+		}
+		payload, _ := json.Marshal(res)
+		_ = m.Respond(payload)
+	})
+	if statementSubErr != nil {
+		logger.Warn("deriv.statement.req subscribe failed", "err", statementSubErr)
 	}
 
 	// Live balance fan-out: subscribe to Deriv balance + heartbeat-publish
