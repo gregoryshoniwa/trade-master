@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/lib/auth";
 import { NO_FLASH_INIT } from "@/lib/theme";
-import Nav from "@/components/Nav";
+import Shell from "@/components/Shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,10 +21,9 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_INIT }} />
       </head>
-      <body className="min-h-screen bg-bg text-text antialiased">
+      <body className="h-screen overflow-hidden bg-bg text-text antialiased">
         <AuthProvider>
-          <Nav />
-          {children}
+          <Shell>{children}</Shell>
         </AuthProvider>
       </body>
     </html>
