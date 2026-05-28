@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import DerivBalance from "@/components/DerivBalance";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 
@@ -34,6 +35,7 @@ export default function TopBar({ onMobileMenu }: Props) {
       </div>
 
       <div className="flex items-center gap-2">
+        {me && <DerivBalance />}
         {me && active && (
           <div className="relative">
             <button

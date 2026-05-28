@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import bus, execution, safety
+from app import bus, deriv as deriv_state, execution, safety
 from app.calendar import start_ingestor as start_calendar
 from app.calendar import stop_ingestor as stop_calendar
 from app.config import settings
@@ -19,6 +19,7 @@ from app.routes import auth as auth_routes
 from app.routes import calendar as calendar_routes
 from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
+from app.routes import deriv as deriv_routes
 from app.routes import forecasting as forecasting_routes
 from app.routes import llm_models as llm_models_routes
 from app.routes import me as me_routes
@@ -45,6 +46,7 @@ async def lifespan(_: FastAPI):
     await bus.connect()
     await start_decision_loop()
     await execution.start()
+    await deriv_state.start()
     await start_calendar()
     await safety.start()
     try:
@@ -52,6 +54,7 @@ async def lifespan(_: FastAPI):
     finally:
         await safety.stop()
         await stop_calendar()
+        await deriv_state.stop()
         await execution.stop()
         await stop_decision_loop()
         await bus.close()
@@ -98,3 +101,4 @@ app.include_router(postmortems_routes.router, prefix="/api/v1")
 app.include_router(calendar_routes.router, prefix="/api/v1")
 app.include_router(safety_routes.router, prefix="/api/v1")
 app.include_router(attribution_routes.router, prefix="/api/v1")
+app.include_router(deriv_routes.router, prefix="/api/v1")

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -82,6 +84,56 @@ func main() {
 		logger.Error("order router failed to start", "err", err)
 		// Non-fatal — ticks + fan-out still work without trading.
 	}
+
+	// Live balance fan-out: subscribe to Deriv balance + heartbeat-publish
+	// to NATS every 5s. Deriv only pushes on transactions, but the
+	// heartbeat means an api subscriber that just came up gets state
+	// within seconds instead of waiting for the next trade.
+	var balanceMu sync.Mutex
+	var latestBalance *trader.BalanceUpdate
+	publishBalance := func(b trader.BalanceUpdate) {
+		payload, _ := json.Marshal(b)
+		_ = nc.Publish("deriv.balance", payload)
+	}
+	go func() {
+		// Subscribe with retry until trader is ready.
+		for ctx.Err() == nil {
+			if tradeClient.Ready() {
+				err := tradeClient.SubscribeBalance(ctx, func(b trader.BalanceUpdate) {
+					balanceMu.Lock()
+					latestBalance = &b
+					balanceMu.Unlock()
+					publishBalance(b)
+				})
+				if err == nil {
+					logger.Info("subscribed to deriv balance updates")
+					break
+				}
+				logger.Warn("balance subscribe failed; retrying", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
+		// Heartbeat republish so newly-connected subscribers get state.
+		hb := time.NewTicker(5 * time.Second)
+		defer hb.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hb.C:
+				balanceMu.Lock()
+				b := latestBalance
+				balanceMu.Unlock()
+				if b != nil {
+					publishBalance(*b)
+				}
+			}
+		}
+	}()
 
 	// Deriv subscriber — publishes received ticks to NATS.
 	symbols := splitCSV(cfg.DefaultSymbol)

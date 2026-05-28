@@ -50,12 +50,21 @@ APPROVE_THRESHOLD_USD = 10.0   # for approve_above_threshold mode
 # querying Deriv `contracts_for` at startup; this static map covers our
 # Phase 1 catalog. Unknown symbols fall back to DEFAULT_MULTIPLIER.
 SYMBOL_MULTIPLIER: dict[str, int] = {
+    # Synthetic indices — verified ranges. R_50/75 reject 50, accept 50+ map.
     "R_10": 100, "R_25": 100, "R_50": 50, "R_75": 50, "R_100": 50,
     "1HZ10V": 100, "1HZ25V": 100, "1HZ50V": 50, "1HZ75V": 50, "1HZ100V": 100,
-    # Real markets (forex/commodity/crypto) all accept 100,200,300,500,800 on
-    # Deriv — verified via contracts_for. Use the smallest (least leverage).
-    "frxEURUSD": 100, "frxGBPUSD": 100, "frxUSDJPY": 100, "frxXAUUSD": 100,
+    # Real markets (forex/commodity/crypto/indices) — Deriv standard
+    # multiplier range for multipliers is [100,200,300,500,800]. Smallest =
+    # least leverage. If a specific symbol rejects 100, bump it (the gateway
+    # logs the broker's accepted set on rejection).
+    "frxEURUSD": 100, "frxGBPUSD": 100, "frxUSDJPY": 100, "frxAUDUSD": 100,
+    "frxUSDCAD": 100, "frxUSDCHF": 100, "frxNZDUSD": 100, "frxEURGBP": 100,
+    "frxEURJPY": 100, "frxGBPJPY": 100, "frxAUDJPY": 100, "frxEURAUD": 100,
+    "frxEURCAD": 100, "frxEURCHF": 100,
+    "frxXAUUSD": 100, "frxXAGUSD": 100, "frxXPDUSD": 100, "frxXPTUSD": 100,
     "cryBTCUSD": 100, "cryETHUSD": 100,
+    "OTC_SPC": 100, "OTC_NDX": 100, "OTC_DJI": 100, "OTC_FTSE": 100,
+    "OTC_GDAXI": 100, "OTC_N225": 100, "OTC_HSI": 100, "OTC_AS51": 100,
 }
 DEFAULT_MULTIPLIER = 100
 

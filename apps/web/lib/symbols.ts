@@ -1,9 +1,9 @@
 /** User-facing names for Deriv symbol codes.
  *
- *  Keep in sync with the asset catalog the api exposes via /symbols. We avoid
- *  forcing an api round-trip every time we render a position row, so a small
- *  static map covers the symbols we actually trade. Unknown codes fall back
- *  to the raw code rather than blowing up.
+ *  Keep in sync with services/api/app/symbols.py CATALOG. We avoid forcing
+ *  an api round-trip every time we render a position row, so a small static
+ *  map covers every symbol we expose. Unknown codes fall back to the raw
+ *  code rather than blowing up.
  */
 
 export const FRIENDLY_SYMBOL: Record<string, string> = {
@@ -11,13 +11,23 @@ export const FRIENDLY_SYMBOL: Record<string, string> = {
   frxEURUSD: "EUR/USD",
   frxGBPUSD: "GBP/USD",
   frxUSDJPY: "USD/JPY",
-  frxUSDCHF: "USD/CHF",
   frxAUDUSD: "AUD/USD",
-  frxNZDUSD: "NZD/USD",
   frxUSDCAD: "USD/CAD",
+  frxUSDCHF: "USD/CHF",
+  frxNZDUSD: "NZD/USD",
+  // Forex minors / crosses
+  frxEURGBP: "EUR/GBP",
+  frxEURJPY: "EUR/JPY",
+  frxGBPJPY: "GBP/JPY",
+  frxAUDJPY: "AUD/JPY",
+  frxEURAUD: "EUR/AUD",
+  frxEURCAD: "EUR/CAD",
+  frxEURCHF: "EUR/CHF",
   // Commodities
   frxXAUUSD: "Gold",
   frxXAGUSD: "Silver",
+  frxXPDUSD: "Palladium",
+  frxXPTUSD: "Platinum",
   // Crypto
   cryBTCUSD: "BTC/USD",
   cryETHUSD: "ETH/USD",
@@ -32,6 +42,15 @@ export const FRIENDLY_SYMBOL: Record<string, string> = {
   "1HZ50V": "Vol 50 (1s)",
   "1HZ75V": "Vol 75 (1s)",
   "1HZ100V": "Vol 100 (1s)",
+  // Stock indices
+  OTC_SPC: "US 500",
+  OTC_NDX: "US Tech 100",
+  OTC_DJI: "Wall Street 30",
+  OTC_FTSE: "UK 100",
+  OTC_GDAXI: "Germany 40",
+  OTC_N225: "Japan 225",
+  OTC_HSI: "Hong Kong 50",
+  OTC_AS51: "Australia 200",
 };
 
 export function friendlySymbol(code: string | null | undefined): string {

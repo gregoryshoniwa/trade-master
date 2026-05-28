@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import AssetMultiPicker from "@/components/AssetMultiPicker";
 import ForecastingModelPicker from "@/components/ForecastingModelPicker";
 import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
@@ -30,6 +31,7 @@ export default function AgentDetailPage() {
   const [llmProvider, setLlmProvider] = useState("");
   const [llmModel, setLlmModel] = useState("");
   const [forecastingModel, setForecastingModel] = useState("ttm-granite-r2");
+  const [allowedAssets, setAllowedAssets] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -46,6 +48,7 @@ export default function AgentDetailPage() {
         setLlmProvider(a.llm_provider);
         setLlmModel(a.llm_model);
         setForecastingModel(a.forecasting_model);
+        setAllowedAssets(a.allowed_assets ?? []);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -71,6 +74,7 @@ export default function AgentDetailPage() {
         llm_provider: llmProvider,
         llm_model: llmModel,
         forecasting_model: forecastingModel,
+        allowed_assets: allowedAssets,
       });
       setAgent(updated);
       setDirty(false);
@@ -229,6 +233,19 @@ export default function AgentDetailPage() {
             value={forecastingModel}
             onChange={(k) => markDirty(setForecastingModel)(k)}
           />
+        </Section>
+
+        <Section title="Allowed assets">
+          <AssetMultiPicker
+            value={allowedAssets}
+            onChange={(next) => markDirty(setAllowedAssets)(next)}
+          />
+          <p className="mt-2 text-[10px] text-text-mute">
+            Empty = the agent can trade any symbol the gateway streams. Tick
+            specific assets to restrict it. The gateway must already be
+            subscribed to the symbol (see DERIV_DEFAULT_SYMBOL in .env) for
+            ticks to flow.
+          </p>
         </Section>
 
         <Section title="Personality">

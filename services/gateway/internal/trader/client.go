@@ -68,6 +68,7 @@ type Client struct {
 	subs     map[int]func(json.RawMessage) // persistent subscriptions
 	reqIDSeq atomic.Int64
 	authed   bool
+	lastAuth BalanceUpdate // snapshot from the most recent authorize response
 }
 
 func New(cfg Config, logger *slog.Logger) *Client {
@@ -176,6 +177,14 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		}
 		c.mu.Lock()
 		c.authed = true
+		if resp.Authorize != nil {
+			c.lastAuth = BalanceUpdate{
+				Loginid:   resp.Authorize.Loginid,
+				Currency:  resp.Authorize.Currency,
+				Balance:   resp.Authorize.Balance,
+				IsVirtual: resp.Authorize.IsVirtual,
+			}
+		}
 		c.mu.Unlock()
 		if resp.Authorize != nil {
 			c.logger.Info("trader authorized",
@@ -323,6 +332,83 @@ func (c *Client) Buy(ctx context.Context, params BuyParams, maxPrice float64) (*
 	case <-time.After(20 * time.Second):
 		return nil, fmt.Errorf("buy timeout")
 	}
+}
+
+// BalanceUpdate is one server-pushed balance tick from Deriv. Currency stays
+// constant for the session; the value moves as trades open/close and rates
+// settle. We pass it back through onUpdate so callers can publish it.
+type BalanceUpdate struct {
+	Loginid   string  `json:"loginid"`
+	Currency  string  `json:"currency"`
+	Balance   float64 `json:"balance"`
+	IsVirtual int     `json:"is_virtual"`
+}
+
+// LastAuthorize returns the balance/currency captured from the authorize
+// response, if any. Useful for an immediate UI value before any balance
+// push arrives.
+func (c *Client) LastAuthorize() (BalanceUpdate, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.authed || c.lastAuth.Loginid == "" {
+		return BalanceUpdate{}, false
+	}
+	return c.lastAuth, true
+}
+
+// SubscribeBalance opens a streaming `balance` subscription on the authorized
+// session. Deriv's first response carries the current balance; subsequent
+// pushes fire on every transaction (buy / sell / settle) so the dashboard
+// shows the live state without polling.
+func (c *Client) SubscribeBalance(ctx context.Context, onUpdate func(BalanceUpdate)) error {
+	if !c.Ready() {
+		return fmt.Errorf("trader not ready")
+	}
+	// Publish the authorize-time snapshot immediately so the UI doesn't
+	// sit empty until the first push fires.
+	if snap, ok := c.LastAuthorize(); ok {
+		c.logger.Info("publishing authorize snapshot",
+			"loginid", snap.Loginid, "balance", snap.Balance)
+		onUpdate(snap)
+	} else {
+		c.logger.Warn("no authorize snapshot available at SubscribeBalance time")
+	}
+	reqID := c.nextReqID()
+	c.mu.Lock()
+	c.subs[reqID] = func(raw json.RawMessage) {
+		var resp struct {
+			Balance *struct {
+				Loginid   string  `json:"loginid"`
+				Currency  string  `json:"currency"`
+				Balance   float64 `json:"balance"`
+				IsVirtual int     `json:"is_virtual"`
+			} `json:"balance"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil || resp.Balance == nil {
+			return
+		}
+		c.logger.Debug("balance push",
+			"loginid", resp.Balance.Loginid,
+			"balance", resp.Balance.Balance)
+		onUpdate(BalanceUpdate{
+			Loginid:   resp.Balance.Loginid,
+			Currency:  resp.Balance.Currency,
+			Balance:   resp.Balance.Balance,
+			IsVirtual: resp.Balance.IsVirtual,
+		})
+	}
+	c.mu.Unlock()
+	if err := c.send(ctx, map[string]any{
+		"balance":   1,
+		"subscribe": 1,
+		"req_id":    reqID,
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.subs, reqID)
+		c.mu.Unlock()
+		return fmt.Errorf("subscribe balance: %w", err)
+	}
+	return nil
 }
 
 // TrackContract subscribes to proposal_open_contract and invokes onUpdate

@@ -134,6 +134,8 @@ export type AgentCreate = {
   personality?: Personality;
   trade_selection_mode?: Agent["trade_selection_mode"];
   strategies?: string[];
+  allowed_assets?: string[];
+  allowed_contract_types?: string[];
   reports_to_agent_id?: string | null;
   voice_id?: string | null;
   allocated_balance_usd?: number;
@@ -350,6 +352,9 @@ export const api = {
     return request<{ events: EconomicEvent[] }>(`/api/v1/calendar${qs ? `?${qs}` : ""}`);
   },
 
+  // ─── deriv state ───
+  getDerivBalance: () => request<DerivBalance>("/api/v1/deriv/balance"),
+
   // ─── safety ───
   getSafety: (companyId: string) =>
     request<SafetyState>(`/api/v1/companies/${companyId}/safety`),
@@ -542,6 +547,16 @@ export type EconomicEvent = {
   affected_currencies: string[];
   affected_assets: string[];
   source: string;
+};
+
+// ─── deriv account state ───
+
+export type DerivBalance = {
+  loginid: string | null;
+  currency: string;
+  balance: number;
+  is_virtual: boolean;
+  available: boolean;
 };
 
 // ─── safety types ───
