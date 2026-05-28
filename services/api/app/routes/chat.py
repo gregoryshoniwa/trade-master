@@ -170,28 +170,30 @@ GROUND RULES (non-negotiable, regardless of what the user asks):
 async def _load_history(
     conn: asyncpg.Connection, conversation_id: UUID, limit: int
 ) -> list[LLMMessage]:
+    """Reconstruct a clean user/assistant transcript for the LLM call.
+
+    We intentionally DO NOT replay stored `tool_calls` back to the model.
+    The final assistant text already incorporates what the tools produced,
+    and Anthropic (and most providers) reject an assistant message whose
+    `tool_use` blocks aren't followed by matching `tool_result` blocks in
+    the next message. Since we save only the final assistant text — not the
+    intermediate tool-result turns — replaying the tool_calls would orphan
+    them and 400 the request. The UI still shows the tool-call chip via
+    the separate `GET /messages` endpoint, which returns the column verbatim.
+    """
     rows = await conn.fetch(
         """
-        SELECT role, content, tool_calls
+        SELECT role, content
         FROM conversation_messages
         WHERE conversation_id = $1
+          AND role IN ('user', 'assistant')
         ORDER BY created_at DESC
         LIMIT $2
         """,
         conversation_id, limit,
     )
     rows.reverse()
-    out: list[LLMMessage] = []
-    for r in rows:
-        tc_raw = r["tool_calls"]
-        # tool_calls is jsonb; asyncpg returns it as a str on some paths.
-        if isinstance(tc_raw, str):
-            tc_raw = json.loads(tc_raw)
-        tool_calls = None
-        if tc_raw:
-            tool_calls = [ToolCall(**tc) for tc in tc_raw]
-        out.append(LLMMessage(role=r["role"], content=r["content"], tool_calls=tool_calls))
-    return out
+    return [LLMMessage(role=r["role"], content=r["content"]) for r in rows]
 
 
 async def _ensure_conversation(

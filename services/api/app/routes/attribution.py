@@ -113,26 +113,32 @@ async def get_attribution(
             company_id,
         )
 
-        # By agent — join agents for name + allocation; left join so agents
-        # with zero settled trades still appear if anyone wants them later.
+        # By agent — start from agents (so zero-trade agents still appear)
+        # and LEFT JOIN postmortems in the chosen window. Surfaces Kronny /
+        # any new agent before its first settled trade.
         agent_rows = await conn.fetch(
             f"""
-            SELECT p.agent_id,
+            SELECT a.id   AS agent_id,
                    a.name AS agent_name,
-                   count(*) AS trades,
-                   count(*) FILTER (WHERE p.outcome = 'win')  AS wins,
-                   count(*) FILTER (WHERE p.outcome = 'loss') AS losses,
-                   COALESCE(sum(p.pnl_usd), 0)        AS pnl,
-                   COALESCE(max(p.pnl_usd), 0)        AS best,
-                   COALESCE(min(p.pnl_usd), 0)        AS worst,
-                   COALESCE(avg(p.pnl_usd), 0)        AS avg_pnl,
+                   COUNT(p.id)                              AS trades,
+                   COUNT(*) FILTER (WHERE p.outcome = 'win')  AS wins,
+                   COUNT(*) FILTER (WHERE p.outcome = 'loss') AS losses,
+                   COALESCE(sum(p.pnl_usd), 0)              AS pnl,
+                   COALESCE(max(p.pnl_usd), 0)              AS best,
+                   COALESCE(min(p.pnl_usd), 0)              AS worst,
+                   COALESCE(avg(p.pnl_usd), 0)              AS avg_pnl,
                    AVG((p.employee_rating->>'calibration_score')::float) AS avg_calib,
                    a.allocated_balance_usd
-            FROM trade_postmortems p
-            LEFT JOIN agents a ON a.id = p.agent_id
-            WHERE p.company_id = $1 AND {where}
-            GROUP BY p.agent_id, a.name, a.allocated_balance_usd
-            ORDER BY pnl DESC
+            FROM agents a
+            LEFT JOIN trade_postmortems p
+                   ON p.agent_id = a.id
+                  AND p.company_id = a.company_id
+                  AND {where}
+            WHERE a.company_id = $1
+              AND a.role = 'employee'
+            GROUP BY a.id, a.name, a.allocated_balance_usd
+            -- agents with trades first (sorted by P&L), zero-trade agents at the bottom
+            ORDER BY (COUNT(p.id) = 0) ASC, pnl DESC
             """,
             company_id,
         )
