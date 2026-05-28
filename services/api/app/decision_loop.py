@@ -32,8 +32,9 @@ import asyncpg
 import nats
 from nats.aio.msg import Msg
 
-from app import bus
+from app import bus, strategies
 from app.db import acquire
+from app.ohlc import get_candles
 from app.risk import evaluate as risk_evaluate
 from app.selection_modes import evaluate_mode
 
@@ -57,17 +58,6 @@ SYMBOL_MULTIPLIER: dict[str, int] = {
     "cryBTCUSD": 100, "cryETHUSD": 100,
 }
 DEFAULT_MULTIPLIER = 100
-
-# Strategy → forecast direction compatibility. Simplified Phase 1 rules
-# (PLAN §4 explains each more fully).
-STRATEGY_DIRECTION_OK: dict[str, set[str]] = {
-    "trend_following":    {"up", "down"},
-    "breakout":           {"up", "down"},
-    "support_resistance": {"up", "down"},
-    "mean_reversion":     {"up", "down"},
-    "price_action":       {"up", "down"},
-}
-
 
 class DecisionLoop:
     def __init__(self, nats_url: str | None = None):
@@ -164,9 +154,19 @@ class DecisionLoop:
         # Asset whitelist on the agent
         if list(agent["allowed_assets"] or []) and asset not in agent["allowed_assets"]:
             return
-        # Strategy must be compatible with this direction
-        strategies = list(agent["strategies"] or [])
-        if not any(direction in STRATEGY_DIRECTION_OK.get(s, set()) for s in strategies):
+        # Strategy gate — fetch recent OHLC and run the agent's strategies
+        # against the live indicators. If none align with the forecast
+        # direction, decline the trade. PLAN §4.
+        strategy_names = list(agent["strategies"] or [])
+        if not strategy_names:
+            return
+        candles = await get_candles(asset, granularity_sec=60, count=200)
+        outcome = strategies.evaluate(strategy_names, candles, direction)
+        if not outcome.accepted:
+            log.info(
+                "intent rejected by strategy agent=%s asset=%s: %s",
+                agent["name"], asset, outcome.reason,
+            )
             return
 
         # Stake sizing: fractional Kelly applied to allocation, capped
@@ -205,7 +205,11 @@ class DecisionLoop:
         allowed_combos = agent["allowed_combinations"]
         if isinstance(allowed_combos, str):
             allowed_combos = json.loads(allowed_combos)
-        triggering_strategy = strategies[0] if strategies else None
+        # The strategy that actually fired is the one whose verdict matched
+        # the forecast direction — surface it on the intent.
+        triggering_strategy = outcome.triggering.name if outcome.triggering else (
+            strategy_names[0] if strategy_names else None
+        )
         accept, mode_reason = evaluate_mode(
             mode,
             allowed_combinations=allowed_combos or [],
@@ -228,7 +232,7 @@ class DecisionLoop:
 
         model = fc.get("model")
         rationale = (
-            f"{agent['name']} ({', '.join(strategies)}): {model} says {direction} "
+            f"{agent['name']} ({', '.join(strategy_names)}): {model} says {direction} "
             f"with confidence {confidence:.2f} (floor {float(agent['min_confidence_threshold']):.2f}). "
             f"Stake sized via Kelly {kelly:.2f} × allocation × confidence. "
             f"Mode={mode}: {mode_reason}."
@@ -240,7 +244,7 @@ class DecisionLoop:
             "agent": {
                 "name": agent["name"],
                 "personality": agent["personality"],
-                "strategies": strategies,
+                "strategies": strategy_names,
                 "kelly_fraction": kelly,
                 "min_confidence_threshold": float(agent["min_confidence_threshold"]),
                 "min_payoff_ratio": payoff,
@@ -266,6 +270,15 @@ class DecisionLoop:
                 "ev_threshold_usd": round(ev_threshold_usd, 4),
                 "accepted": True,
                 "reason": mode_reason,
+            },
+            "strategy": {
+                "triggering": triggering_strategy,
+                "score": outcome.triggering.score if outcome.triggering else 0.0,
+                "reason": outcome.reason,
+                "verdicts": [
+                    {"name": v.name, "verdict": v.verdict, "score": v.score, "reason": v.reason}
+                    for v in outcome.verdicts
+                ],
             },
         }
 
