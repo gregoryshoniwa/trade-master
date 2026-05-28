@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -116,52 +115,46 @@ func main() {
 		logger.Warn("deriv.statement.req subscribe failed", "err", statementSubErr)
 	}
 
-	// Live balance fan-out: subscribe to Deriv balance + heartbeat-publish
-	// to NATS every 5s. Deriv only pushes on transactions, but the
-	// heartbeat means an api subscriber that just came up gets state
-	// within seconds instead of waiting for the next trade.
-	var balanceMu sync.Mutex
-	var latestBalance *trader.BalanceUpdate
+	// Live balance fan-out: poll `balance` every 5s on the authorized
+	// session and republish to NATS. We tried a push subscription first,
+	// but Deriv's balance push goes silent after a socket reconnect (the
+	// new connection has no active subscription and resubscribing
+	// requires reconnect-detection plumbing). A one-shot poll every 5s is
+	// boring, robust, and a 0.2 RPS load on the broker.
 	publishBalance := func(b trader.BalanceUpdate) {
 		payload, _ := json.Marshal(b)
 		_ = nc.Publish("deriv.balance", payload)
 	}
 	go func() {
-		// Subscribe with retry until trader is ready.
-		for ctx.Err() == nil {
-			if tradeClient.Ready() {
-				err := tradeClient.SubscribeBalance(ctx, func(b trader.BalanceUpdate) {
-					balanceMu.Lock()
-					latestBalance = &b
-					balanceMu.Unlock()
-					publishBalance(b)
-				})
-				if err == nil {
-					logger.Info("subscribed to deriv balance updates")
-					break
-				}
-				logger.Warn("balance subscribe failed; retrying", "err", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		// Best-effort first publish from the authorize snapshot so the
+		// dashboard isn't empty for the first 5s after boot.
+		if snap, ok := tradeClient.LastAuthorize(); ok {
+			publishBalance(snap)
 		}
-		// Heartbeat republish so newly-connected subscribers get state.
-		hb := time.NewTicker(5 * time.Second)
-		defer hb.Stop()
+		consecutiveFails := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-hb.C:
-				balanceMu.Lock()
-				b := latestBalance
-				balanceMu.Unlock()
-				if b != nil {
-					publishBalance(*b)
+			case <-ticker.C:
+				if !tradeClient.Ready() {
+					continue
 				}
+				reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+				b, err := tradeClient.GetBalance(reqCtx)
+				cancel()
+				if err != nil {
+					consecutiveFails++
+					// Log sparsely so a temporary outage doesn't spam.
+					if consecutiveFails == 1 || consecutiveFails%12 == 0 {
+						logger.Warn("balance poll failed", "err", err, "consecutive", consecutiveFails)
+					}
+					continue
+				}
+				consecutiveFails = 0
+				publishBalance(b)
 			}
 		}
 	}()

@@ -453,6 +453,61 @@ func (c *Client) LastAuthorize() (BalanceUpdate, bool) {
 	return c.lastAuth, true
 }
 
+// GetBalance is a one-shot `balance` request on the authorized session.
+// Used as a poll-based refresh instead of the push subscription, which is
+// fragile across socket reconnects (the new connection has no active sub
+// and pushes silently stop).
+func (c *Client) GetBalance(ctx context.Context) (BalanceUpdate, error) {
+	if !c.Ready() {
+		return BalanceUpdate{}, fmt.Errorf("trader not ready")
+	}
+	reqID := c.nextReqID()
+	ch := c.register(reqID)
+	if err := c.send(ctx, map[string]any{
+		"balance": 1,
+		"req_id":  reqID,
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.pending, reqID)
+		c.mu.Unlock()
+		return BalanceUpdate{}, fmt.Errorf("send balance: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		return BalanceUpdate{}, ctx.Err()
+	case raw := <-ch:
+		var resp struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Balance *struct {
+				Loginid   string  `json:"loginid"`
+				Currency  string  `json:"currency"`
+				Balance   float64 `json:"balance"`
+				IsVirtual int     `json:"is_virtual"`
+			} `json:"balance"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return BalanceUpdate{}, fmt.Errorf("decode balance: %w", err)
+		}
+		if resp.Error != nil {
+			return BalanceUpdate{}, fmt.Errorf("deriv: %s %s", resp.Error.Code, resp.Error.Message)
+		}
+		if resp.Balance == nil {
+			return BalanceUpdate{}, fmt.Errorf("empty balance response")
+		}
+		return BalanceUpdate{
+			Loginid:   resp.Balance.Loginid,
+			Currency:  resp.Balance.Currency,
+			Balance:   resp.Balance.Balance,
+			IsVirtual: resp.Balance.IsVirtual,
+		}, nil
+	case <-time.After(10 * time.Second):
+		return BalanceUpdate{}, fmt.Errorf("balance timeout")
+	}
+}
+
 // SubscribeBalance opens a streaming `balance` subscription on the authorized
 // session. Deriv's first response carries the current balance; subsequent
 // pushes fire on every transaction (buy / sell / settle) so the dashboard
