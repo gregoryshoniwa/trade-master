@@ -1,10 +1,32 @@
 # TradeMaster — AI-Orchestrated Multi-Model Trading System
 
-**Version:** 1.0 (Final Plan) · **Last updated:** 2026-05-26 · **Owner:** Gregory Shoniwa
+**Version:** 1.0 (Final Plan) · **Spec last updated:** 2026-05-26 · **Owner:** Gregory Shoniwa
 **Tenancy:** Multi-tenant SaaS · **Launch:** Zimbabwe → Africa
 **Local dev:** MacBook Air M1, 8GB (full Docker dev stack, CPU TSFMs)
 **Memory:** mem0 (Apache 2.0, self-hosted on pgvector)
-**Design inspiration:** LITTLEBEE (dark + lime green) + AI-specific widgets
+**Design inspiration:** LITTLEBEE → conventional trading palette (TradingView-style blue accent + #26A69A / #EF5350)
+
+---
+
+## Implementation status — May 2026
+
+| Phase | Status | Notes |
+|---|---|---|
+| **0. Foundations + Docker** | ✅ **DONE** | Full compose stack (postgres+pgvector, redis, nats, questdb, gateway, api, ttm, kronos, web), password auth+signup+invites (replaced magic-link), multi-tenant scoping, LLM adapter pattern (Anthropic / Gemini / OpenRouter / vLLM) |
+| **1. Agents + mem0 + 2 TSFMs** | ✅ **DONE** | Agent CRUD UI, 5 personality presets, mem0 on pgvector with local sentence-transformers embedder, TTM + Kronos-small forecasting services, forecasts-as-bands on chart, Tier 1 enforcement |
+| **2. Strategies + Backtest** | 🟡 **PARTIAL** | ✅ Five strategy modules (EMA/ATR/RSI/ADX/BB indicators, deterministic rules) wired into the decision loop. ✅ Walk-forward backtest harness (CLI). ⏳ Chronos / TimesFM / FinCast not built. ⏳ Conformal calibration deferred. ⏳ Backtest UI deferred. |
+| **3. Approval, Kelly, Attribution** | 🟡 **PARTIAL** | ✅ Approval queue + Kelly sizing, ✅ Risk Agent (11 checks incl. event blackout), ✅ Postmortems + per-employee rating, ✅ **Attribution dashboard** (per-agent/model/asset), ✅ Auto-pause cron for losing agents. ⏳ LangGraph Manager+Strategy+Research (multi-day rewrite). ⏳ Personality-detector cron. |
+| **4. Conversational + Calendar** | 🟡 **PARTIAL** | ✅ Text chat per agent, ✅ Economic-calendar ingestor (Forex Factory weekly JSON) + risk blackout windows. ⏳ Voice via Gemini Live deferred. |
+| **5. Sentiment + Signals + Contracts** | ⛔ **NOT STARTED** | Polymarket / Kalshi / Manifold / Finnhub news, volume profile, full Deriv contract plugin registry — all deferred. |
+| **6. Real-money Safeguards** | 🟡 **PARTIAL** | ✅ Kill switch (per-company, manual + circuit-breaker auto-trip on daily loss limit). ⏳ Profit sweep / insurance fund / Optuna / Evidently drift detection deferred. |
+| **7. Hardening + ZW Beta** | ⛔ **NOT STARTED** | WebAuthn live-trade unlock, 14-day paper gate, ZW Shona translations, Stripe + crypto-pay, RL execution agent — all deferred. Kill switch (one of three triggers) is in place. |
+| **8. Africa Expansion + GPU + Mobile** | ⛔ **NOT STARTED** | Cloud GPU tier (Chronos-2 / FinCast 1B), mobile (PWA + React Native), continent expansion — multi-month roadmap. |
+
+**A/B in flight on Deriv demo (since 2026-05-27):** Trendy (Gemini + TTM) vs Kronny (Gemini + Kronos-small), both autonomous on real markets (frxEURUSD, frxXAUUSD, cryBTCUSD), confidence floor 0.45. Postmortems accumulate per `source_model` so the comparison is decision-grade. See [README.md](README.md) for the live status snapshot.
+
+**Honest finding so far** ([memory: ttm-no-stable-edge]): TTM showed no robust directional edge on the backtest — overall hit-rate 51–55% with confidence-vs-accuracy unstable across timeframes. Kronos-small needs the same walk-forward eval. Don't scale up live trading until a stable edge is demonstrated.
+
+---
 
 A production-grade autonomous trading platform that:
 
@@ -2115,7 +2137,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 
 ## 29. Phased Delivery Roadmap
 
-### Phase 0 — Foundations + Docker (Weeks 1–3)
+### Phase 0 — Foundations + Docker (Weeks 1–3) — ✅ DONE
 
 - Monorepo (Turborepo) + CI skeleton
 - `docker compose up` brings up everything
@@ -2125,7 +2147,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - LLM adapter stubs (Gemini Flash, Claude, OpenAI)
 - Multi-tenant scoping in every endpoint
 
-### Phase 1 — Agent Mgmt + Personalities + mem0 + 2 TSFMs (Weeks 4–7)
+### Phase 1 — Agent Mgmt + Personalities + mem0 + 2 TSFMs (Weeks 4–7) — ✅ DONE
 
 - Agent CRUD UI with **personality preset picker** + **Custom params**
 - **Agent radar chart** (initially seeded with preset defaults)
@@ -2136,7 +2158,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - Forecasts as bands on chart
 - **Tier 1 enforcement** (Forex Majors only by default)
 
-### Phase 2 — Remaining 3 TSFMs + Strategies + Backtesting (Weeks 8–11)
+### Phase 2 — Remaining 3 TSFMs + Strategies + Backtesting (Weeks 8–11) — 🟡 PARTIAL
 
 - Chronos-Bolt-small + TimesFM 2.5 + Kronos-base
 - 5 trading strategies as Python modules
@@ -2146,7 +2168,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - Conformal calibration
 - Backtest UI
 
-### Phase 3 — Agents + Approval Queue + Kelly + Attribution + Tier Manager (Weeks 12–16)
+### Phase 3 — Agents + Approval Queue + Kelly + Attribution + Tier Manager (Weeks 12–16) — 🟡 PARTIAL
 
 - LangGraph: Manager + 5 Strategy Agents + Research + Risk Agent
 - mem0 in chat flow
@@ -2160,7 +2182,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - **Tier manager service + Tier Map UI**
 - Paper trading end-to-end
 
-### Phase 4 — Conversational + Calendar Engine (Weeks 17–21)
+### Phase 4 — Conversational + Calendar Engine (Weeks 17–21) — 🟡 PARTIAL
 
 - Text chat per Agent
 - Voice Bridge (Gemini Live)
@@ -2174,7 +2196,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - **Strategy event-adaptation rules**
 - **Event-aware sizing**
 
-### Phase 5 — Sentiment + Signals + Full Deriv Contract Registry (Weeks 22–24)
+### Phase 5 — Sentiment + Signals + Full Deriv Contract Registry (Weeks 22–24) — ⛔ NOT STARTED
 
 - Polymarket + Kalshi + Manifold price clients
 - Finnhub news; GDELT daily
@@ -2184,7 +2206,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - **Contract type plugin registry** with Tier 1–4 plugins (Multipliers, Accumulators, Turbos)
 - Add Tier 5+ contract plugins progressively
 
-### Phase 6 — Real-Money Safeguards + Strategy Discovery (Weeks 25–27)
+### Phase 6 — Real-Money Safeguards + Strategy Discovery (Weeks 25–27) — 🟡 PARTIAL
 
 - **Profit sweep** + insurance fund + greed/cooling-off limits
 - **Edge Report** dashboard
@@ -2193,7 +2215,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - Drift detection (Evidently)
 - Continuous learning trigger
 
-### Phase 7 — Hardening + ZW Public Beta (Weeks 28–32)
+### Phase 7 — Hardening + ZW Public Beta (Weeks 28–32) — ⛔ NOT STARTED
 
 - Kill switch (3 triggers, per-Company + per-Agent)
 - Circuit breakers
@@ -2208,7 +2230,7 @@ Doppler dev/staging · Vault prod (dynamic secrets, rotate Deriv tokens 90d) · 
 - **RL execution agent (PPO)** shadow-mode trial
 - Tier 5–7 contract plugins live for users who unlocked
 
-### Phase 8 — Africa Expansion + GPU + Mobile + Full Deriv (Months 8–12)
+### Phase 8 — Africa Expansion + GPU + Mobile + Full Deriv (Months 8–12) — ⛔ NOT STARTED
 
 - Cloud GPU tier (Chronos-2 + FinCast 1B) opt-in
 - Expand: Kenya / Nigeria / SA / Ghana
