@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import DerivBalance from "@/components/DerivBalance";
+import NotificationBell from "@/components/NotificationBell";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 
@@ -87,6 +88,7 @@ export default function TopBar({ onMobileMenu }: Props) {
         )}
 
         <ThemeToggle />
+        {me && <NotificationBell />}
 
         {loading ? (
           <span className="text-xs text-text-mute">…</span>

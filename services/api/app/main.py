@@ -34,9 +34,13 @@ from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
 from app.routes import deriv as deriv_routes
 from app.routes import edge as edge_routes
+from app.routes import employee_requests as employee_requests_routes
 from app.routes import forecasting as forecasting_routes
 from app.routes import llm_models as llm_models_routes
 from app.routes import manager_actions as manager_actions_routes
+from app.routes import meetings as meetings_routes
+from app.routes import meetings_list as meetings_list_routes
+from app.routes import notifications as notifications_routes
 from app.routes import me as me_routes
 from app.routes import members as members_routes
 from app.routes import payroll as payroll_routes
@@ -132,6 +136,10 @@ app.include_router(postmortems_routes.router, prefix="/api/v1")
 app.include_router(manager_actions_routes.router, prefix="/api/v1")
 app.include_router(calibration_routes.router, prefix="/api/v1")
 app.include_router(activity_routes.router, prefix="/api/v1")
+app.include_router(meetings_routes.router, prefix="/api/v1")
+app.include_router(meetings_list_routes.router, prefix="/api/v1")
+app.include_router(employee_requests_routes.router, prefix="/api/v1")
+app.include_router(notifications_routes.router, prefix="/api/v1")
 app.include_router(calendar_routes.router, prefix="/api/v1")
 app.include_router(safety_routes.router, prefix="/api/v1")
 app.include_router(attribution_routes.router, prefix="/api/v1")

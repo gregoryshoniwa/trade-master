@@ -558,6 +558,77 @@ export const api = {
       `/api/v1/companies/${companyId}/agents/${agentId}/activity?limit=${limit}`,
     ),
 
+  // ─── manager meetings ───
+  triggerManagerReview: (companyId: string) =>
+    request<{ accepted: boolean; note: string | null }>(
+      `/api/v1/companies/${companyId}/manager/run-review`,
+      { method: "POST" },
+    ),
+
+  scheduleManagerMeeting: (
+    companyId: string,
+    body: { employee_agent_id: string; agenda?: string | null },
+  ) =>
+    request<{ accepted: boolean; note: string | null }>(
+      `/api/v1/companies/${companyId}/manager/meetings`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  listMeetings: (
+    companyId: string,
+    opts?: { kind?: "review" | "meeting"; limit?: number },
+  ) => {
+    const p = new URLSearchParams();
+    if (opts?.kind) p.set("kind", opts.kind);
+    if (opts?.limit != null) p.set("limit", String(opts.limit));
+    const qs = p.toString();
+    return request<MeetingSummary[]>(
+      `/api/v1/companies/${companyId}/meetings${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getMeeting: (companyId: string, meetingId: string) =>
+    request<MeetingDetail>(
+      `/api/v1/companies/${companyId}/meetings/${meetingId}`,
+    ),
+
+  followUpOnMeeting: (companyId: string, meetingId: string, message: string) =>
+    request<{ accepted: boolean; note: string | null }>(
+      `/api/v1/companies/${companyId}/manager/meetings/${meetingId}/follow-up`,
+      { method: "POST", body: JSON.stringify({ message }) },
+    ),
+
+  listEmployeeRequests: (companyId: string) =>
+    request<EmployeeMeetingRequest[]>(
+      `/api/v1/companies/${companyId}/meeting-requests`,
+    ),
+
+  // ─── company goals ───
+  getCompanyGoals: (companyId: string) =>
+    request<CompanyGoals>(`/api/v1/companies/${companyId}/goals`),
+
+  updateCompanyGoals: (companyId: string, body: CompanyGoals) =>
+    request<CompanyGoals>(
+      `/api/v1/companies/${companyId}/goals`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+
+  // ─── notifications ───
+  listNotifications: (limit = 30) =>
+    request<NotificationList>(`/api/v1/notifications?limit=${limit}`),
+
+  markNotificationRead: (notificationId: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/notifications/${notificationId}/read`,
+      { method: "POST" },
+    ),
+
+  markAllNotificationsRead: () =>
+    request<{ ok: boolean; marked: number }>(
+      `/api/v1/notifications/read-all`,
+      { method: "POST" },
+    ),
+
   // ─── web search config ───
   getWebSearchConfig: (companyId: string) =>
     request<WebSearchConfig>(`/api/v1/companies/${companyId}/web-search-config`),
@@ -621,6 +692,8 @@ export type WebSearchConfig = {
   blocked_domains: string[];
   daily_quota: number;
   used_today: number;
+  backend: "auto" | "tavily" | "duckduckgo";
+  tavily_available: boolean;
 };
 
 export type WebSearchConfigUpdate = {
@@ -628,6 +701,63 @@ export type WebSearchConfigUpdate = {
   allowed_domains?: string[];
   blocked_domains?: string[];
   daily_quota?: number;
+  backend?: "auto" | "tavily" | "duckduckgo";
+};
+
+export type MeetingKind = "review" | "meeting";
+
+export type MeetingSummary = {
+  id: string;
+  kind: MeetingKind;
+  manager_name: string | null;
+  employee_name: string | null;
+  employee_agent_id: string | null;
+  agenda: string | null;
+  narrative_preview: string | null;
+  has_transcript: boolean;
+  created_at: string;
+};
+
+export type MeetingTurn = {
+  role: string;
+  content: string;
+  tool_calls: unknown;
+  created_at: string;
+};
+
+export type MeetingDetail = MeetingSummary & {
+  narrative: string | null;
+  transcript: MeetingTurn[];
+};
+
+export type EmployeeMeetingRequest = {
+  id: string;
+  employee_agent_id: string;
+  employee_name: string | null;
+  reason: string;
+  status: "pending" | "addressed" | "declined";
+  created_at: string;
+  addressed_at: string | null;
+  addressed_action_id: string | null;
+};
+
+export type CompanyGoals = {
+  daily_profit_target_usd: number | null;
+};
+
+export type Notification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type NotificationList = {
+  items: Notification[];
+  unread: number;
 };
 
 export type AgentActivityEvent = {

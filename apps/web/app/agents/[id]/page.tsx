@@ -8,7 +8,9 @@ import AgentActivityFeed from "@/components/AgentActivityFeed";
 import AssetMultiPicker from "@/components/AssetMultiPicker";
 import CalibrationCard from "@/components/CalibrationCard";
 import ForecastingModelPicker from "@/components/ForecastingModelPicker";
+import LastMeetingBadge from "@/components/LastMeetingBadge";
 import ManagerHistory from "@/components/ManagerHistory";
+import PendingRequests from "@/components/PendingRequests";
 import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
 import VoicePicker from "@/components/VoicePicker";
@@ -206,14 +208,34 @@ export default function AgentDetailPage() {
         </div>
       </header>
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         <Link
           href={`/agents/${agent.id}/chat`}
           className="rounded-md bg-bull px-3 py-1.5 text-sm font-medium text-bg hover:opacity-90"
         >
           💬 Chat with {agent.name}
         </Link>
+        {agent.role === "manager" && (
+          <RunReviewButton companyId={activeCompanyId} />
+        )}
+        {agent.role !== "manager" && (
+          <HoldMeetingButton
+            companyId={activeCompanyId}
+            employeeId={agent.id}
+            employeeName={agent.name}
+          />
+        )}
       </div>
+
+      {activeCompanyId && (
+        <div className="mb-4">
+          <LastMeetingBadge
+            companyId={activeCompanyId}
+            agentId={agent.id}
+            isManager={agent.role === "manager"}
+          />
+        </div>
+      )}
 
       <div className="space-y-6">
         <Section title="Identity">
@@ -361,6 +383,12 @@ export default function AgentDetailPage() {
           </Section>
         )}
 
+        {agent.role === "manager" && activeCompanyId && (
+          <Section title="Employee requests">
+            <PendingRequests companyId={activeCompanyId} />
+          </Section>
+        )}
+
         {activeCompanyId && (
           <Section title="Live activity">
             <AgentActivityFeed companyId={activeCompanyId} agentId={agent.id} />
@@ -431,6 +459,86 @@ function Readonly({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg bg-bg-elev-1 p-2">
       <div className="text-xs text-text-mute">{label}</div>
       <div className="num text-sm">{value}</div>
+    </div>
+  );
+}
+
+function RunReviewButton({ companyId }: { companyId: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run() {
+    if (!companyId) return;
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      const r = await api.triggerManagerReview(companyId);
+      setDone(r.note ?? "review running");
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "failed");
+    } finally {
+      setBusy(false);
+      // Auto-hide the confirmation after 6s so the button can be reused.
+      setTimeout(() => setDone(null), 6_000);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy || !companyId}
+        className="rounded-md border border-accent/40 px-3 py-1.5 text-sm text-accent hover:bg-accent/10 disabled:opacity-50"
+      >
+        {busy ? "Starting…" : "📋 Run review now"}
+      </button>
+      {done && <span className="text-xs text-bull">{done}</span>}
+      {err && <span className="text-xs text-bear">{err}</span>}
+    </div>
+  );
+}
+
+function HoldMeetingButton({
+  companyId, employeeId, employeeName,
+}: { companyId: string | null; employeeId: string; employeeName: string }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run() {
+    if (!companyId) return;
+    const agenda = window.prompt(
+      `What should the manager discuss with ${employeeName}? (optional — leave blank for an open-ended 1:1)`,
+    );
+    if (agenda === null) return; // cancel
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      const r = await api.scheduleManagerMeeting(companyId, {
+        employee_agent_id: employeeId,
+        agenda: agenda.trim() || null,
+      });
+      setDone(r.note ?? "meeting scheduled");
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "failed");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setDone(null), 6_000);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy || !companyId}
+        className="rounded-md border border-accent/40 px-3 py-1.5 text-sm text-accent hover:bg-accent/10 disabled:opacity-50"
+      >
+        {busy ? "Scheduling…" : "🪑 Hold 1:1 meeting"}
+      </button>
+      {done && <span className="text-xs text-bull">{done}</span>}
+      {err && <span className="text-xs text-bear">{err}</span>}
     </div>
   );
 }

@@ -23,9 +23,13 @@ log = logging.getLogger("trademaster.tools")
 
 
 # Fields the manager is allowed to change on an employee. Anything that
-# touches the broker connection (llm_*, forecasting_model) or the CEO's
-# strategic intent (personality, voice_id, allocated_balance_usd) is
-# off-limits — those are CEO/operator concerns, not the manager's.
+# touches the broker connection (llm_*, forecasting_model) or the
+# employee's character (personality, voice_id) stays off-limits — those
+# are CEO concerns, not the manager's.
+#
+# `allocated_balance_usd` IS included here: the CEO often instructs the
+# manager during chat (e.g. "cut Kronny's allocation to $50") and the
+# manager needs to be able to execute that directly.
 MANAGER_ADJUSTABLE_FIELDS = {
     "min_confidence_threshold": (float, 0.0, 1.0),
     "kelly_fraction":           (float, 0.0, 1.0),
@@ -33,6 +37,7 @@ MANAGER_ADJUSTABLE_FIELDS = {
     "max_position_size_usd":    (float, 1.0, 10000.0),
     "max_trades_per_day":       (int,   1,   2000),
     "target_holding_secs":      (int,   30,  86400),
+    "allocated_balance_usd":    (float, 0.0, 100000.0),
 }
 
 
@@ -171,6 +176,121 @@ def available_tools() -> list[ToolDef]:
                 "required": ["employee_agent_id", "reason"],
             },
         ),
+        ToolDef(
+            name="hold_meeting_with_employee",
+            description=(
+                "MANAGER ONLY. Hold a focused 1:1 meeting with a specific "
+                "employee — a deeper, single-employee conversation that "
+                "writes its own transcript and lets you take one targeted "
+                "action. Call this when a team review surfaced one employee "
+                "that deserves more attention than the standard pass."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {
+                        "type": "string",
+                        "description": "UUID of the employee to meet with.",
+                    },
+                    "agenda": {
+                        "type": "string",
+                        "description": "One sentence on what you want to discuss.",
+                    },
+                },
+                "required": ["employee_agent_id", "agenda"],
+            },
+        ),
+
+        # ── Company-level goals (CEO ⇄ manager loop) ────────────────────
+        ToolDef(
+            name="get_company_goals",
+            description=(
+                "Return the calling Company's CEO-set goals — currently "
+                "the daily profit target (USD) if any, plus paper-mode "
+                "status. Read this at the start of every review so your "
+                "decisions track the CEO's intent. NULL target means "
+                "'no specific target; just don't lose money'."
+            ),
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolDef(
+            name="set_company_daily_profit_target",
+            description=(
+                "MANAGER ONLY. Update the Company's daily profit target "
+                "in USD. Use this when the CEO instructs you to change "
+                "the target during a chat or meeting. Pass null to clear "
+                "the target. Always include `reason` so the audit trail "
+                "explains the change."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "daily_profit_target_usd": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                        "maximum": 100000,
+                        "description": "New target in USD, or null to clear.",
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["daily_profit_target_usd", "reason"],
+            },
+        ),
+
+        # ── Economic calendar (PLAN §9) ─────────────────────────────────
+        ToolDef(
+            name="get_upcoming_economic_events",
+            description=(
+                "Return upcoming high-impact economic events from the "
+                "ingested Forex Factory calendar. Useful for the manager "
+                "when sizing risk, and for employees deciding whether "
+                "to trade through an event window. Defaults to the next "
+                "24 hours and high-impact only — these are the ones that "
+                "actually move markets."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "hours_ahead": {
+                        "type": "integer", "minimum": 1, "maximum": 168,
+                        "description": "How far ahead to look (default 24).",
+                    },
+                    "impact": {
+                        "type": "string",
+                        "enum": ["high", "medium", "any"],
+                        "description": "Minimum event impact level (default 'high').",
+                    },
+                    "asset": {
+                        "type": "string",
+                        "description": "Optional — filter to events affecting this Deriv symbol.",
+                    },
+                },
+            },
+        ),
+
+        # ── Employee → Manager messaging ────────────────────────────────
+        ToolDef(
+            name="request_meeting_with_manager",
+            description=(
+                "EMPLOYEE ONLY. Drop a request into the manager's queue "
+                "asking for a 1:1 — use this when you've noticed "
+                "something material the manager should know about (a "
+                "loss streak, an asset that's stopped working, a "
+                "config you think should change). The manager picks up "
+                "pending requests at the next review or in a triggered "
+                "1:1; don't expect an immediate response."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "1-2 sentences on what you want to discuss.",
+                    },
+                },
+                "required": ["reason"],
+            },
+        ),
 
         # ── Web search (gated by per-company config) ────────────────────
         ToolDef(
@@ -215,7 +335,23 @@ class ToolContext:
         self.agent_id = agent_id
 
 
-MANAGER_TOOLS = {"get_team_status", "adjust_employee", "pause_employee", "resume_employee"}
+MANAGER_TOOLS = {
+    "get_team_status", "adjust_employee", "pause_employee", "resume_employee",
+    "hold_meeting_with_employee", "set_company_daily_profit_target",
+}
+EMPLOYEE_TOOLS = {"request_meeting_with_manager"}
+
+
+async def _ensure_employee(ctx: ToolContext) -> str | None:
+    """Inverse of `_ensure_manager` — used for employee-only tools."""
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM agents WHERE id = $1 AND company_id = $2",
+            ctx.agent_id, ctx.company_id,
+        )
+    if role != "employee":
+        return f"only employee agents can call this tool (caller role: {role})"
+    return None
 
 
 async def _ensure_manager(ctx: ToolContext) -> str | None:
@@ -242,6 +378,10 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
             denied = await _ensure_manager(ctx)
             if denied is not None:
                 return json.dumps({"error": denied})
+        if name in EMPLOYEE_TOOLS:
+            denied = await _ensure_employee(ctx)
+            if denied is not None:
+                return json.dumps({"error": denied})
         match name:
             case "get_pnl":
                 payload = await _get_pnl(args, ctx)
@@ -261,6 +401,16 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
                 payload = await _resume_employee(args, ctx)
             case "web_search":
                 payload = await _web_search(args, ctx)
+            case "hold_meeting_with_employee":
+                payload = await _hold_meeting_with_employee(args, ctx)
+            case "get_company_goals":
+                payload = await _get_company_goals(ctx)
+            case "set_company_daily_profit_target":
+                payload = await _set_company_daily_profit_target(args, ctx)
+            case "get_upcoming_economic_events":
+                payload = await _get_upcoming_economic_events(args, ctx)
+            case "request_meeting_with_manager":
+                payload = await _request_meeting_with_manager(args, ctx)
             case _:
                 payload = {"error": f"unknown tool: {name}"}
     except Exception as e:
@@ -556,6 +706,222 @@ async def _resume_employee(args: dict, ctx: ToolContext) -> dict[str, Any]:
         employee_agent_id=emp_id, kind="resume", reason=reason,
     )
     return {"ok": True, "paused": False}
+
+
+async def _get_company_goals(ctx: ToolContext) -> dict[str, Any]:
+    async with acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT name, paper_mode, current_asset_tier,
+                   daily_profit_target_usd
+            FROM companies WHERE id = $1
+            """,
+            ctx.company_id,
+        )
+    if row is None:
+        return {"error": "company not found"}
+    target = row["daily_profit_target_usd"]
+    return {
+        "company_name": row["name"],
+        "paper_mode": bool(row["paper_mode"]),
+        "current_asset_tier": int(row["current_asset_tier"] or 1),
+        "daily_profit_target_usd": float(target) if target is not None else None,
+        "guidance": (
+            "Size positions and pick employees to support this target."
+            if target is not None else
+            "No specific daily target set — preserve capital and avoid losses."
+        ),
+    }
+
+
+async def _set_company_daily_profit_target(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    reason = (args.get("reason") or "").strip()
+    raw = args.get("daily_profit_target_usd")
+    if not reason:
+        return {"error": "reason is required"}
+    # Allow null to clear, otherwise validate range.
+    target: float | None
+    if raw is None:
+        target = None
+    else:
+        try:
+            target = float(raw)
+        except (TypeError, ValueError):
+            return {"error": "daily_profit_target_usd must be a number or null"}
+        if target < 0 or target > 100_000:
+            return {"error": "daily_profit_target_usd must be between 0 and 100,000"}
+    async with acquire() as conn:
+        prev = await conn.fetchval(
+            "SELECT daily_profit_target_usd FROM companies WHERE id = $1",
+            ctx.company_id,
+        )
+        await conn.execute(
+            "UPDATE companies SET daily_profit_target_usd = $2, updated_at = now() WHERE id = $1",
+            ctx.company_id, target,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=None, kind="adjust",
+        field_name="company.daily_profit_target_usd",
+        before_value=float(prev) if prev is not None else None,
+        after_value=target,
+        reason=reason,
+    )
+    return {
+        "ok": True,
+        "previous": float(prev) if prev is not None else None,
+        "current": target,
+    }
+
+
+async def _get_upcoming_economic_events(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    hours = int(args.get("hours_ahead") or 24)
+    hours = max(1, min(168, hours))
+    impact = (args.get("impact") or "high").lower()
+    asset = (args.get("asset") or "").strip()
+
+    clauses = ["ts BETWEEN now() AND now() + make_interval(hours => $1)"]
+    sql_args: list[Any] = [hours]
+    if impact == "high":
+        clauses.append("impact = 'high'")
+    elif impact == "medium":
+        clauses.append("impact IN ('medium','high')")
+    # 'any' → no impact filter
+    if asset:
+        sql_args.append(asset)
+        clauses.append(f"${len(sql_args)} = ANY(affected_assets)")
+    where = " AND ".join(clauses)
+    async with acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT name, impact, currency, ts, affected_assets
+            FROM economic_events
+            WHERE {where}
+            ORDER BY ts ASC
+            LIMIT 40
+            """,
+            *sql_args,
+        )
+    events = [
+        {
+            "name": r["name"],
+            "impact": r["impact"],
+            "currency": r["currency"],
+            "ts": r["ts"].isoformat(),
+            "minutes_until": int((r["ts"].timestamp() - _now_ts()) / 60),
+            "affected_assets": list(r["affected_assets"] or []),
+        }
+        for r in rows
+    ]
+    return {
+        "hours_ahead": hours,
+        "impact_filter": impact,
+        "asset_filter": asset or None,
+        "events": events,
+        "guidance": (
+            "Avoid opening new positions within 15 minutes of a high-impact "
+            "event on the affected asset; halve stake for 2 hours after."
+            if events else
+            "No events in this window — clear runway."
+        ),
+    }
+
+
+def _now_ts() -> float:
+    """Wrapped so unit tests can monkeypatch (and to keep the import
+    block at the top quiet — `time` lives only here)."""
+    import time as _t
+    return _t.time()
+
+
+async def _request_meeting_with_manager(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    reason = (args.get("reason") or "").strip()
+    if not reason:
+        return {"error": "reason is required (1-2 sentences)"}
+    # Cap the reason to a reasonable length so a runaway LLM can't
+    # write a novel into the queue.
+    reason = reason[:2000]
+    async with acquire() as conn:
+        # Don't pile up duplicate pending requests from the same
+        # employee in a short window — coalesce.
+        existing = await conn.fetchval(
+            """
+            SELECT id FROM employee_meeting_requests
+            WHERE employee_agent_id = $1 AND status = 'pending'
+              AND created_at > now() - interval '6 hours'
+            LIMIT 1
+            """,
+            ctx.agent_id,
+        )
+        if existing is not None:
+            return {
+                "ok": True,
+                "request_id": str(existing),
+                "note": "you already have a pending request; the manager will see both reasons next review",
+            }
+        new_id = await conn.fetchval(
+            """
+            INSERT INTO employee_meeting_requests
+                (company_id, employee_agent_id, reason)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            """,
+            ctx.company_id, ctx.agent_id, reason,
+        )
+    return {
+        "ok": True,
+        "request_id": str(new_id),
+        "note": "the manager will pick this up at the next review or 1:1",
+    }
+
+
+async def _hold_meeting_with_employee(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    """Schedule a 1:1 meeting between the calling manager and a named
+    employee. The meeting itself runs as a background task so it doesn't
+    block the calling LLM round; the transcript surfaces in the activity
+    feed and chat history once it completes."""
+    import asyncio as _asyncio
+
+    from app.manager_review import in_meeting_with, trigger_one_on_one
+
+    # Recursion guard: if this tool is called from inside an
+    # already-running 1:1, refuse. Otherwise a manager that wants to
+    # "go deeper" on an employee just spawns another meeting from
+    # within the current one, which then does the same, ad infinitum.
+    current = in_meeting_with.get()
+    if current is not None:
+        return {
+            "error": (
+                "you are already in a 1:1 meeting — finish this one "
+                "(by writing your meeting notes and not calling any "
+                "more tools) before scheduling another"
+            ),
+        }
+
+    agenda = (args.get("agenda") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    if not agenda:
+        return {"error": "agenda is required (1 sentence on what you want to discuss)"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    # Verify the employee exists on this company before spawning the task —
+    # cheap pre-check so the LLM gets immediate feedback on a bad id.
+    async with acquire() as conn:
+        emp = await conn.fetchrow(
+            "SELECT id, name FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+    if emp is None:
+        return {"error": "employee not found on this company"}
+    # Fire-and-forget. The task runs after the current tool call
+    # returns, so the manager's review can finish writing its own
+    # transcript first.
+    _asyncio.create_task(trigger_one_on_one(
+        company_id=ctx.company_id, employee_agent_id=emp_id, agenda=agenda,
+    ))
+    return {"ok": True, "scheduled": True, "employee_name": emp["name"]}
 
 
 async def _web_search(args: dict, ctx: ToolContext) -> dict[str, Any]:

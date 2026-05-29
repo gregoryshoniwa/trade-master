@@ -170,12 +170,62 @@ async def set_paper_mode(
     )
 
 
+class CompanyGoals(BaseModel):
+    daily_profit_target_usd: float | None
+
+
+class CompanyGoalsUpdate(BaseModel):
+    daily_profit_target_usd: float | None = Field(default=None, ge=0, le=100_000)
+
+
+@router.get("/{company_id}/goals", response_model=CompanyGoals)
+async def get_company_goals(company_id: UUID, account_id: CurrentAccount):
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        v = await conn.fetchval(
+            "SELECT daily_profit_target_usd FROM companies WHERE id = $1",
+            company_id,
+        )
+    return CompanyGoals(daily_profit_target_usd=float(v) if v is not None else None)
+
+
+@router.patch("/{company_id}/goals", response_model=CompanyGoals)
+async def patch_company_goals(
+    company_id: UUID, body: CompanyGoalsUpdate, account_id: CurrentAccount,
+):
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        if role not in ("owner", "admin"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner/admin only")
+        v = await conn.fetchval(
+            """
+            UPDATE companies SET daily_profit_target_usd = $2, updated_at = now()
+            WHERE id = $1
+            RETURNING daily_profit_target_usd
+            """,
+            company_id, body.daily_profit_target_usd,
+        )
+    return CompanyGoals(daily_profit_target_usd=float(v) if v is not None else None)
+
+
 class WebSearchConfig(BaseModel):
     enabled: bool
     allowed_domains: list[str]
     blocked_domains: list[str]
     daily_quota: int
     used_today: int
+    backend: str
+    tavily_available: bool
 
 
 class WebSearchConfigUpdate(BaseModel):
@@ -183,10 +233,12 @@ class WebSearchConfigUpdate(BaseModel):
     allowed_domains: list[str] | None = None
     blocked_domains: list[str] | None = None
     daily_quota: int | None = Field(default=None, ge=0, le=10_000)
+    backend: str | None = None  # 'auto' | 'tavily' | 'duckduckgo'
 
 
 @router.get("/{company_id}/web-search-config", response_model=WebSearchConfig)
 async def get_web_search_config(company_id: UUID, account_id: CurrentAccount):
+    import os as _os
     async with acquire() as conn:
         role = await conn.fetchval(
             "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
@@ -197,7 +249,8 @@ async def get_web_search_config(company_id: UUID, account_id: CurrentAccount):
         row = await conn.fetchrow(
             """
             SELECT web_search_enabled, web_search_allowed_domains,
-                   web_search_blocked_domains, web_search_daily_quota
+                   web_search_blocked_domains, web_search_daily_quota,
+                   web_search_backend
             FROM companies WHERE id = $1
             """,
             company_id,
@@ -217,6 +270,8 @@ async def get_web_search_config(company_id: UUID, account_id: CurrentAccount):
         blocked_domains=list(row["web_search_blocked_domains"] or []),
         daily_quota=int(row["web_search_daily_quota"]),
         used_today=int(used),
+        backend=row["web_search_backend"] or "auto",
+        tavily_available=bool(_os.getenv("TAVILY_API_KEY")),
     )
 
 
@@ -255,6 +310,12 @@ async def patch_web_search_config(
         allowed = _norm(body.allowed_domains)
         blocked = _norm(body.blocked_domains)
 
+        # Backend validation — the DB CHECK would catch this but we
+        # want a nicer 400 than a 500.
+        backend = body.backend
+        if backend is not None and backend not in ("auto", "tavily", "duckduckgo"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "backend must be auto / tavily / duckduckgo")
+
         row = await conn.fetchrow(
             """
             UPDATE companies SET
@@ -262,12 +323,14 @@ async def patch_web_search_config(
                 web_search_allowed_domains = COALESCE($3, web_search_allowed_domains),
                 web_search_blocked_domains = COALESCE($4, web_search_blocked_domains),
                 web_search_daily_quota = COALESCE($5, web_search_daily_quota),
+                web_search_backend = COALESCE($6, web_search_backend),
                 updated_at = now()
             WHERE id = $1
             RETURNING web_search_enabled, web_search_allowed_domains,
-                      web_search_blocked_domains, web_search_daily_quota
+                      web_search_blocked_domains, web_search_daily_quota,
+                      web_search_backend
             """,
-            company_id, body.enabled, allowed, blocked, body.daily_quota,
+            company_id, body.enabled, allowed, blocked, body.daily_quota, backend,
         )
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
@@ -280,12 +343,15 @@ async def patch_web_search_config(
             """,
             company_id,
         ) or 0
+    import os as _os
     return WebSearchConfig(
         enabled=bool(row["web_search_enabled"]),
         allowed_domains=list(row["web_search_allowed_domains"] or []),
         blocked_domains=list(row["web_search_blocked_domains"] or []),
         daily_quota=int(row["web_search_daily_quota"]),
         used_today=int(used),
+        backend=row["web_search_backend"] or "auto",
+        tavily_available=bool(_os.getenv("TAVILY_API_KEY")),
     )
 
 

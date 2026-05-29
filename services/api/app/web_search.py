@@ -55,25 +55,43 @@ class CompanyWebSearchConfig:
     allowed_domains: list[str]
     blocked_domains: list[str]
     daily_quota: int
+    backend: str  # 'auto' | 'tavily' | 'duckduckgo'
 
 
 async def _load_config(conn, company_id: UUID) -> CompanyWebSearchConfig:
     row = await conn.fetchrow(
         """
         SELECT web_search_enabled, web_search_allowed_domains,
-               web_search_blocked_domains, web_search_daily_quota
+               web_search_blocked_domains, web_search_daily_quota,
+               web_search_backend
         FROM companies WHERE id = $1
         """,
         company_id,
     )
     if row is None:
-        return CompanyWebSearchConfig(False, [], [], 0)
+        return CompanyWebSearchConfig(False, [], [], 0, "auto")
     return CompanyWebSearchConfig(
         enabled=bool(row["web_search_enabled"]),
         allowed_domains=[d.lower() for d in (row["web_search_allowed_domains"] or [])],
         blocked_domains=[d.lower() for d in (row["web_search_blocked_domains"] or [])],
         daily_quota=int(row["web_search_daily_quota"]),
+        backend=row["web_search_backend"] or "auto",
     )
+
+
+def _backend_order(pref: str) -> list[str]:
+    """Returns the ordered list of backends to try.
+
+    'auto' prefers Tavily when its key is set; if it errors we fall
+    back to DDG. Explicit choices pin a single backend and surface
+    failures rather than silently falling through, so the CEO can
+    tell when their preferred backend is misconfigured."""
+    if pref == "tavily":
+        return ["tavily"]
+    if pref == "duckduckgo":
+        return ["duckduckgo"]
+    # auto: try Tavily first when configured, then DDG
+    return ["tavily", "duckduckgo"] if TAVILY_API_KEY else ["duckduckgo"]
 
 
 async def _today_used(conn, company_id: UUID) -> int:
@@ -230,17 +248,32 @@ async def search(
                                     quota_used_today=used, quota_total=cfg.daily_quota)
 
     # Hit the backend OUTSIDE the connection so a slow upstream doesn't
-    # pin a Postgres connection from the pool.
-    try:
-        if TAVILY_API_KEY:
-            raw = await _tavily_search(query, max_results * 2)
-        else:
-            raw = await _ddg_search(query, max_results * 2)
-    except Exception as e:
-        log.exception("web search backend failed query=%r", query)
+    # pin a Postgres connection from the pool. Try each backend in
+    # preference order; a transient error on the first only matters if
+    # it's the only one configured.
+    raw: list[WebSearchResult] = []
+    last_error: Exception | None = None
+    for backend in _backend_order(cfg.backend):
+        try:
+            if backend == "tavily":
+                if not TAVILY_API_KEY:
+                    # Pinned-to-Tavily case with no key configured is a
+                    # user-visible misconfiguration — don't silently
+                    # fall back, surface it instead.
+                    raise RuntimeError("Tavily selected but TAVILY_API_KEY is not set on the api server")
+                raw = await _tavily_search(query, max_results * 2)
+            else:
+                raw = await _ddg_search(query, max_results * 2)
+            last_error = None
+            break
+        except Exception as e:
+            log.warning("web search backend %s failed: %s", backend, e)
+            last_error = e
+            continue
+    if last_error is not None and not raw:
         async with acquire() as conn:
-            await _audit(conn, company_id, agent_id, query, 0, False, f"upstream error: {e!s}")
-        return WebSearchOutcome(False, [], f"search engine unavailable: {e!s}")
+            await _audit(conn, company_id, agent_id, query, 0, False, f"upstream error: {last_error!s}")
+        return WebSearchOutcome(False, [], f"search engine unavailable: {last_error!s}")
 
     filtered = _filter_results(raw, cfg)[:max_results]
     async with acquire() as conn:
