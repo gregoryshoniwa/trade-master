@@ -127,7 +127,7 @@ export class VoiceSession {
         model: session.model,
         requiresGeminiBrain: session.requires_gemini_brain,
       });
-      await this.openSocket(session.ws_url, session.model);
+      await this.openSocket(session.ws_url, session.model, session.voice_name);
       this.setState("ready");
       await this.startMic();
       this.startedAtMs = performance.now();
@@ -143,15 +143,20 @@ export class VoiceSession {
 
   // Wait for the WebSocket to negotiate, send setup, await setupComplete.
   // Past that point the browser-side onmessage handler does all the work.
-  private openSocket(wsUrl: string, model: string): Promise<void> {
+  private openSocket(wsUrl: string, model: string, voiceName: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
       this.ws = ws;
-      // BinaryType doesn't matter — we use text frames throughout. The
-      // upstream switches to text JSON for all directions per the
-      // BidiGenerateContent spec.
       ws.onerror = () => reject(new Error("WebSocket connection failed"));
+      // setupComplete has to land within this window or we bail — otherwise
+      // the modal sits in "connecting" forever (as it did when our setup
+      // was too minimal for the constrained endpoint to ack).
+      const setupTimer = setTimeout(() => {
+        reject(new Error("Gemini setup didn't complete in time"));
+        try { ws.close(); } catch { /* ignore */ }
+      }, 15_000);
       ws.onclose = (ev) => {
+        clearTimeout(setupTimer);
         if (this.state !== "ended" && this.state !== "error") {
           this.setState("ended");
           this.cb.onClosed?.(this.elapsedMs());
@@ -159,32 +164,56 @@ export class VoiceSession {
         if (ev.code === 1008) this.cb.onError?.("ephemeral token rejected (1008)");
       };
       ws.onopen = () => {
-        // Send Setup. Even though the token is constrained server-side,
-        // the protocol still requires a `setup.model`. Anything else here
-        // is overridden by the constraint, so we keep this minimal.
-        ws.send(JSON.stringify({ setup: { model: `models/${model}` } }));
+        // Match the field shape Google's own ephemeral-token example sends.
+        // The constrained token has the system_instruction + tools locked
+        // server-side, so we don't repeat those. But the constrained
+        // endpoint *does* require generationConfig/transcription stubs in
+        // the setup envelope or it silently never acks (the failure mode
+        // we hit: WS open, no setupComplete, modal stuck "connecting").
+        ws.send(JSON.stringify({
+          setup: {
+            model: `models/${model}`,
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName },
+                },
+              },
+            },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+          },
+        }));
       };
-      ws.onmessage = (ev) => {
-        let parsed: unknown;
-        if (typeof ev.data === "string") {
-          try { parsed = JSON.parse(ev.data); } catch { return; }
-        } else if (ev.data instanceof Blob) {
-          // The constrained endpoint sometimes responds as a Blob the very
-          // first message (the setupComplete ack). Read it and forward to
-          // the same dispatcher.
-          ev.data.text().then((txt) => {
-            try { this.onServerMessage(JSON.parse(txt)); } catch { /* drop */ }
-          });
-          return;
-        } else {
-          return;
-        }
+      const handle = (parsed: unknown) => {
         const obj = parsed as Record<string, unknown>;
         if ("setupComplete" in obj) {
+          clearTimeout(setupTimer);
           resolve();
           return;
         }
+        // `goAway` and `error` frames also signal "we won't be acking" —
+        // surface them so the modal shows the broker reason instead of
+        // hanging on the timeout.
+        if (obj.goAway || obj.error) {
+          clearTimeout(setupTimer);
+          reject(new Error(`Gemini Live: ${JSON.stringify(obj).slice(0, 200)}`));
+          return;
+        }
         this.onServerMessage(parsed);
+      };
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === "string") {
+          try { handle(JSON.parse(ev.data)); } catch { /* drop malformed */ }
+        } else if (ev.data instanceof Blob) {
+          // Gemini's first frame is sometimes a Blob containing the
+          // setupComplete JSON. We have to read async — onmessage can't
+          // be async, so we route through the same handle() afterward.
+          ev.data.text().then((txt) => {
+            try { handle(JSON.parse(txt)); } catch { /* drop */ }
+          });
+        }
       };
     });
   }

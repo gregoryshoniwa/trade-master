@@ -91,6 +91,17 @@ export default function TickChart({
   const p50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const p10SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const p90SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Moving-average overlays — added below the price series so the price
+  // line stays the most prominent. Periods chosen to mirror what's most
+  // commonly drawn on retail charts: SMA-20 for the short trend, SMA-50
+  // for the medium one.
+  const sma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const sma50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  // Source data for indicator computation. We keep our own array because
+  // lightweight-charts series don't expose their backing data, and a
+  // running window over the visible price series is the only honest way
+  // to compute an SMA without bringing in a TA dep.
+  const priceHistoryRef = useRef<{ time: UTCTimestamp; close: number }[]>([]);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<Map<string, IPriceLine[]>>(new Map());
   const lastEpochRef = useRef<number>(0);
@@ -107,6 +118,8 @@ export default function TickChart({
   const [historyRows, setHistoryRows] = useState<number | null>(null);
   const [mode, setMode] = useState<ChartMode>("line");
   const modeRef = useRef<ChartMode>(mode);
+  const [showSMA20, setShowSMA20] = useState(false);
+  const [showSMA50, setShowSMA50] = useState(false);
   const theme = useTheme();
 
   const fmt = new Intl.NumberFormat("en-US", {
@@ -171,6 +184,16 @@ export default function TickChart({
       color: c.warning, lineWidth: 2, lineStyle: 1,
       lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
     });
+    // SMA-20 / SMA-50 overlays. Hidden by default; the user opts in via
+    // the chips above the chart.
+    const sma20 = chart.addSeries(LineSeries, {
+      color: c.bull, lineWidth: 1, lineStyle: 1, visible: false,
+      lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+    });
+    const sma50 = chart.addSeries(LineSeries, {
+      color: c.bear, lineWidth: 1, lineStyle: 1, visible: false,
+      lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+    });
 
     chartRef.current = chart;
     lineSeriesRef.current = lineSeries;
@@ -178,6 +201,8 @@ export default function TickChart({
     p50SeriesRef.current = p50;
     p10SeriesRef.current = p10;
     p90SeriesRef.current = p90;
+    sma20Ref.current = sma20;
+    sma50Ref.current = sma50;
     // Attach markers to whichever series is currently primary; we re-attach
     // on mode switch so markers follow the visible price.
     markersRef.current = createSeriesMarkers(lineSeries, []);
@@ -198,9 +223,21 @@ export default function TickChart({
       p50SeriesRef.current = null;
       p10SeriesRef.current = null;
       p90SeriesRef.current = null;
+      sma20Ref.current = null;
+      sma50Ref.current = null;
       markersRef.current = null;
     };
   }, []);
+
+  // ── indicator toggles ──────────────────────────────────────────────
+  // We hide the series rather than blank its data so flipping back on
+  // doesn't need a full recompute.
+  useEffect(() => {
+    sma20Ref.current?.applyOptions({ visible: showSMA20 });
+  }, [showSMA20]);
+  useEffect(() => {
+    sma50Ref.current?.applyOptions({ visible: showSMA50 });
+  }, [showSMA50]);
 
   // ── theme re-skin ──────────────────────────────────────────────────
   useEffect(() => {
@@ -225,6 +262,8 @@ export default function TickChart({
     p50SeriesRef.current?.applyOptions({ color: c.warning });
     p10SeriesRef.current?.applyOptions({ color: c.bandSoft });
     p90SeriesRef.current?.applyOptions({ color: c.bandSoft });
+    sma20Ref.current?.applyOptions({ color: c.bull });
+    sma50Ref.current?.applyOptions({ color: c.bear });
   }, [theme]);
 
   // ── symbol or mode change → reload history + reset overlays ─────────
@@ -241,6 +280,9 @@ export default function TickChart({
     p50SeriesRef.current?.setData([]);
     p10SeriesRef.current?.setData([]);
     p90SeriesRef.current?.setData([]);
+    sma20Ref.current?.setData([]);
+    sma50Ref.current?.setData([]);
+    priceHistoryRef.current = [];
     markersRef.current?.setMarkers([]);
     for (const lines of priceLinesRef.current.values()) {
       const tip = lineSeriesRef.current;
@@ -271,6 +313,12 @@ export default function TickChart({
             value: row.value,
           }));
           lineSeriesRef.current?.setData(lines);
+          // Seed indicator history off the backfill so SMAs aren't blank
+          // until enough live ticks arrive.
+          priceHistoryRef.current = lines.map((l) => ({
+            time: l.time as UTCTimestamp, close: l.value,
+          }));
+          recomputeIndicators(priceHistoryRef.current, sma20Ref.current, sma50Ref.current);
           if (lines.length) {
             lastEpochRef.current = lines[lines.length - 1].time as number;
             chartRef.current?.timeScale().fitContent();
@@ -291,6 +339,10 @@ export default function TickChart({
           const candles = await fetchDerivCandles(symbol, CANDLE_GRANULARITY, CANDLE_COUNT);
           if (cancelled || symbolRef.current !== symbol || modeRef.current !== "candles") return;
           candleSeriesRef.current?.setData(candles);
+          priceHistoryRef.current = candles.map((c) => ({
+            time: c.time, close: c.close,
+          }));
+          recomputeIndicators(priceHistoryRef.current, sma20Ref.current, sma50Ref.current);
           if (candles.length) {
             curBarRef.current = candles[candles.length - 1];
             lastEpochRef.current = candles[candles.length - 1].time as number;
@@ -344,6 +396,10 @@ export default function TickChart({
                 time: t as UTCTimestamp,
                 value: quote,
               });
+              appendIndicatorSample(
+                priceHistoryRef.current, t as UTCTimestamp, quote,
+                sma20Ref.current, sma50Ref.current,
+              );
             } else {
               // Aggregate into the current OHLC bar.
               const bucket = (Math.floor(t / CANDLE_GRANULARITY) * CANDLE_GRANULARITY) as UTCTimestamp;
@@ -354,11 +410,22 @@ export default function TickChart({
                 };
                 curBarRef.current = bar;
                 candleSeriesRef.current?.update(bar);
+                appendIndicatorSample(
+                  priceHistoryRef.current, bucket, quote,
+                  sma20Ref.current, sma50Ref.current,
+                );
               } else {
                 cur.high = Math.max(cur.high, quote);
                 cur.low = Math.min(cur.low, quote);
                 cur.close = quote;
                 candleSeriesRef.current?.update(cur);
+                // Update the last sample's close (same bar still in progress)
+                // so the indicator tracks the live tip.
+                const hist = priceHistoryRef.current;
+                if (hist.length && hist[hist.length - 1].time === cur.time) {
+                  hist[hist.length - 1].close = quote;
+                  recomputeLatestSMA(hist, sma20Ref.current, sma50Ref.current);
+                }
               }
               lastEpochRef.current = t;
             }
@@ -494,6 +561,18 @@ export default function TickChart({
         </div>
         <div className="flex items-center gap-3">
           <ModeToggle value={mode} onChange={setMode} />
+          <IndicatorChips
+            sma20={showSMA20} onSMA20={setShowSMA20}
+            sma50={showSMA50} onSMA50={setShowSMA50}
+          />
+          <button
+            type="button"
+            onClick={() => chartRef.current?.timeScale().fitContent()}
+            className="rounded-md border border-border bg-bg-elev-1 px-2 py-1 text-xs text-text-dim hover:border-accent/40 hover:text-text"
+            title="Fit all data into view"
+          >
+            Fit
+          </button>
           <div className="text-right text-xs">
             <div className={connected ? "text-bull" : "text-bear"}>
               {connected ? "● connected" : "○ disconnected"}
@@ -519,7 +598,105 @@ export default function TickChart({
   );
 }
 
+// ── Indicator math ─────────────────────────────────────────────────
+// Simple moving average — sum the last N closes, divide. Computed once
+// over the full history when the data is reseeded; incrementally on each
+// new sample. We feed the resulting series directly to lightweight-charts
+// without a TA library because SMA is a one-liner and bringing in `klinecharts`
+// or `technicalindicators` would double the bundle for a single overlay.
+
+const SMA20_PERIOD = 20;
+const SMA50_PERIOD = 50;
+
+function smaSeries(
+  history: { time: UTCTimestamp; close: number }[],
+  period: number,
+): LineData[] {
+  if (history.length < period) return [];
+  const out: LineData[] = [];
+  let sum = 0;
+  for (let i = 0; i < history.length; i++) {
+    sum += history[i].close;
+    if (i >= period) sum -= history[i - period].close;
+    if (i >= period - 1) {
+      out.push({ time: history[i].time, value: sum / period });
+    }
+  }
+  return out;
+}
+
+function recomputeIndicators(
+  history: { time: UTCTimestamp; close: number }[],
+  sma20: ISeriesApi<"Line"> | null,
+  sma50: ISeriesApi<"Line"> | null,
+) {
+  sma20?.setData(smaSeries(history, SMA20_PERIOD));
+  sma50?.setData(smaSeries(history, SMA50_PERIOD));
+}
+
+function appendIndicatorSample(
+  history: { time: UTCTimestamp; close: number }[],
+  time: UTCTimestamp, close: number,
+  sma20: ISeriesApi<"Line"> | null,
+  sma50: ISeriesApi<"Line"> | null,
+) {
+  history.push({ time, close });
+  // Bound the buffer so the page doesn't leak after a long session. 5000
+  // samples = ~83 minutes of 1-sec ticks or ~3.5 days of 1-min candles —
+  // far more than the chart can render meaningfully.
+  if (history.length > 5000) history.shift();
+  recomputeLatestSMA(history, sma20, sma50);
+}
+
+function recomputeLatestSMA(
+  history: { time: UTCTimestamp; close: number }[],
+  sma20: ISeriesApi<"Line"> | null,
+  sma50: ISeriesApi<"Line"> | null,
+) {
+  if (history.length >= SMA20_PERIOD && sma20) {
+    let s = 0;
+    for (let i = history.length - SMA20_PERIOD; i < history.length; i++) s += history[i].close;
+    sma20.update({ time: history[history.length - 1].time, value: s / SMA20_PERIOD });
+  }
+  if (history.length >= SMA50_PERIOD && sma50) {
+    let s = 0;
+    for (let i = history.length - SMA50_PERIOD; i < history.length; i++) s += history[i].close;
+    sma50.update({ time: history[history.length - 1].time, value: s / SMA50_PERIOD });
+  }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
+
+function IndicatorChips({
+  sma20, onSMA20, sma50, onSMA50,
+}: {
+  sma20: boolean; onSMA20: (v: boolean) => void;
+  sma50: boolean; onSMA50: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex gap-1 rounded-md border border-border bg-bg-elev-1 p-1 text-xs">
+      <Chip on={sma20} onClick={() => onSMA20(!sma20)} tone="bull">SMA 20</Chip>
+      <Chip on={sma50} onClick={() => onSMA50(!sma50)} tone="bear">SMA 50</Chip>
+    </div>
+  );
+}
+
+function Chip({
+  on, onClick, tone, children,
+}: {
+  on: boolean; onClick: () => void; tone: "bull" | "bear"; children: React.ReactNode;
+}) {
+  const onCls = tone === "bull" ? "bg-bull-soft text-bull" : "bg-bear-soft text-bear";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded px-2 py-1 transition ${on ? onCls : "text-text-mute hover:text-text"}`}
+    >
+      {children}
+    </button>
+  );
+}
 
 function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: ChartMode) => void }) {
   const opts: { v: ChartMode; label: string }[] = [

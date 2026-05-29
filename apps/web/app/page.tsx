@@ -59,12 +59,30 @@ export default function DashboardPage() {
     });
   }, [symbol]);
 
-  // Poll recent intents to drive the chart overlays + rail panels.
+  // Poll recent intents to drive the chart overlays + rail panels. We
+  // fetch TWO lists and merge them: "all" gives us the latest 100 events
+  // (most of which are closed/failed — they're what the chart history
+  // needs) and "open" guarantees every still-open position surfaces, even
+  // if it was opened yesterday and is buried under recent rejections.
+  // Without the second list the agents rail showed 0 open while the
+  // broker held 78 contracts (the gap the user spotted).
   const refreshIntents = useCallback(async () => {
     if (!activeCompanyId) return;
     try {
-      const r = await api.listIntents(activeCompanyId, "all", 100);
-      setIntents(r.intents);
+      const [recent, open] = await Promise.all([
+        api.listIntents(activeCompanyId, "all", 100),
+        api.listIntents(activeCompanyId, "open", 200),
+      ]);
+      const seen = new Set<string>();
+      const merged: typeof recent.intents = [];
+      for (const i of [...open.intents, ...recent.intents]) {
+        if (seen.has(i.id)) continue;
+        seen.add(i.id);
+        merged.push(i);
+      }
+      // Newest first so the chart and rail share the same ordering.
+      merged.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      setIntents(merged);
     } catch {
       /* AuthProvider handles 401s; transient errors don't need UI */
     }
@@ -166,23 +184,9 @@ export default function DashboardPage() {
     [intents, symbol],
   );
 
-  // Unauthenticated / empty state
-  if (!loading && !me) {
-    return (
-      <div className="mx-auto max-w-md px-6 py-16 text-center">
-        <h1 className="mb-2 text-2xl font-semibold">TradeMaster</h1>
-        <p className="mb-6 text-sm text-text-mute">
-          AI-orchestrated multi-model trading on Deriv.
-        </p>
-        <Link
-          href="/login"
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-strong"
-        >
-          Sign in
-        </Link>
-      </div>
-    );
-  }
+  // The Shell handles the logged-out redirect to /login centrally, so we
+  // don't need to render an inline landing here. By the time this point is
+  // reached the Shell has already established that the user is signed in.
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">

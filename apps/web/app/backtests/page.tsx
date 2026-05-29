@@ -93,14 +93,30 @@ export default function BacktestsPage() {
   // (max 24). Snap on every model change so the user can never submit an
   // out-of-range value.
   const horizonMax = selectedModel?.prediction_length ?? 60;
+  // Kronos on CPU costs ~60s per window with sample_count=8. At the TTM
+  // defaults (count=5000, stride=3) a 5-symbol Kronos run takes ~130
+  // hours and just times out. When Kronos is picked we snap the form to
+  // settings that finish in a reasonable wall-clock without sacrificing
+  // statistical value too badly: stride=20 (skip 19/20 windows),
+  // count=1500 (~one trading day of 1-min bars), horizon=12 (Kronos cap).
+  const isKronos = selectedModel?.family === "kronos";
   useEffect(() => {
     if (!selectedModel) return;
-    // Pick something reasonable: the smaller of the current value and the
-    // model's max. If we're snapping down on a model switch, pick the
-    // ceiling so the user sees the longest horizon this model supports.
     setHorizon((h) => (h > horizonMax ? horizonMax : h));
+    if (isKronos) {
+      setBarCount((c) => Math.min(c, 1500));
+      setStride((s) => Math.max(s, 20));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelKey, horizonMax]);
+
+  // Rough cost estimate so the user can see what they're committing to
+  // before pressing Run. The per-window time is empirical for CPU; tweak
+  // if we ever support GPU or batched inference.
+  const symbolsCount = symbolsCsv.split(",").map((s) => s.trim()).filter(Boolean).length;
+  const perWindowSecs = isKronos ? 60 : 0.15;
+  const windowsPerSymbol = Math.max(0, Math.floor((barCount - (selectedModel?.context_length ?? 256)) / Math.max(1, stride)));
+  const estimateSecs = Math.round(windowsPerSymbol * symbolsCount * perWindowSecs);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -250,11 +266,25 @@ export default function BacktestsPage() {
             />
           </Field>
 
-          <div className="md:col-span-2 flex items-center justify-between gap-2">
+          <div className="md:col-span-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10px] text-text-mute">
-              TTM finishes in seconds. Kronos-base is CPU-only and can take
-              several minutes per symbol — the row will poll itself to
-              "done" while you keep working.
+              {isKronos ? (
+                <>
+                  Kronos runs on CPU at ~60s/window. Estimated wall-clock:{" "}
+                  <span className={`num ${estimateSecs > 6 * 3600 ? "text-bear" : estimateSecs > 60 * 60 ? "text-warning" : "text-text"}`}>
+                    {formatDuration(estimateSecs)}
+                  </span>
+                  {" · "}{windowsPerSymbol.toLocaleString()} windows × {symbolsCount} symbol{symbolsCount === 1 ? "" : "s"}.
+                  Server timeout is 6h — over that and the run is killed.
+                  Push the stride higher or the bar count lower to finish sooner.
+                </>
+              ) : (
+                <>
+                  TTM finishes in seconds. Estimated{" "}
+                  <span className="num text-text">{formatDuration(estimateSecs)}</span>{" "}
+                  for {windowsPerSymbol.toLocaleString()} windows × {symbolsCount} symbol{symbolsCount === 1 ? "" : "s"}.
+                </>
+              )}
             </p>
             <button
               type="submit"
@@ -376,6 +406,13 @@ function Stat({ label, value, tone = "muted" }: { label: string; value: string; 
       <div className={`num text-sm ${cls}`}>{value}</div>
     </div>
   );
+}
+
+function formatDuration(secs: number): string {
+  if (secs < 90) return `${secs}s`;
+  if (secs < 60 * 90) return `${Math.round(secs / 60)} min`;
+  const hours = secs / 3600;
+  return hours < 10 ? `${hours.toFixed(1)} h` : `${Math.round(hours)} h`;
 }
 
 function StatusPill({ status }: { status: BacktestRun["status"] }) {

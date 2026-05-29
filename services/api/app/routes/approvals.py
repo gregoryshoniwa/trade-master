@@ -175,13 +175,18 @@ async def list_intents(
     company_id: UUID,
     account_id: CurrentAccount,
     status_filter: Annotated[Literal[
-        "all", "pending_approval", "approved", "auto_approved",
+        "all", "open", "pending_approval", "approved", "auto_approved",
         "rejected_by_risk", "rejected_by_user", "expired",
         "executed", "failed_execution"
     ], Query(alias="status")] = "all",
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ):
-    """Recent intents — useful for the audit/feed view."""
+    """Recent intents — useful for the audit/feed view.
+
+    `status=open` is a convenience for "executed but not closed yet" — the
+    dashboard's agents rail uses it so a position opened yesterday still
+    surfaces today, instead of getting buried under the more-recent feed
+    of approvals/rejections. The default `all` mirrors what /history wants."""
     async with acquire() as conn:
         await _ensure_member(conn, company_id, account_id)
         if status_filter == "all":
@@ -192,6 +197,20 @@ async def list_intents(
                 JOIN agents a ON a.id = i.agent_id
                 WHERE i.company_id = $1
                 ORDER BY i.created_at DESC
+                LIMIT $2
+                """,
+                company_id, limit,
+            )
+        elif status_filter == "open":
+            rows = await conn.fetch(
+                """
+                SELECT i.*, a.name AS agent_name
+                FROM trade_intents i
+                JOIN agents a ON a.id = i.agent_id
+                WHERE i.company_id = $1
+                  AND i.status = 'executed'
+                  AND i.closed_at IS NULL
+                ORDER BY i.executed_at DESC NULLS LAST, i.created_at DESC
                 LIMIT $2
                 """,
                 company_id, limit,

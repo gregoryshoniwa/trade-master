@@ -137,9 +137,11 @@ export default function Sidebar({ mobile = false }: Props) {
 }
 
 function Brand({ collapsed }: { collapsed: boolean }) {
+  // h-12 matches the TopBar's height so the underline runs as one
+  // continuous line across the brand corner and into the topbar.
   return (
-    <Link href="/" className="flex h-14 items-center gap-2 border-b border-border px-3 hover:opacity-80">
-      <div className="h-7 w-7 shrink-0 rounded-md bg-accent shadow-glow" />
+    <Link href="/" className="flex h-12 items-center gap-2 border-b border-border px-3 hover:opacity-80">
+      <div className="h-6 w-6 shrink-0 rounded-md bg-accent shadow-glow" />
       {!collapsed && <span className="text-sm font-semibold tracking-tight">TradeMaster</span>}
     </Link>
   );

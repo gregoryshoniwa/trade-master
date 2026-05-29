@@ -447,7 +447,7 @@ export const api = {
 
   listIntents: (
     companyId: string,
-    status: TradeIntentStatus | "all" = "all",
+    status: TradeIntentStatus | "all" | "open" = "all",
     limit = 50,
   ) =>
     request<{ intents: TradeIntent[] }>(

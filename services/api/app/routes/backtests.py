@@ -49,10 +49,13 @@ MODEL_ENDPOINTS: dict[str, str] = {
     "ttm-granite-r2": "http://ttm:8081/backtest",
     "kronos-base":    "http://kronos:8082/backtest",
 }
-# Generous deadline — Kronos with stride=3 / count=5000 on 5 symbols can
-# legitimately take 30+ minutes on CPU. The api caller awaits this in the
-# background, not in the request thread.
-BACKTEST_TIMEOUT_SECS = 60 * 60
+# Generous deadline. Kronos on CPU is *very* slow (~60s per window with
+# sample_count=8). At the form's default density (stride=3, count=5000,
+# 5 symbols) one run would take 130+ hours; even with the smarter Kronos
+# defaults the form ships, a 5-symbol run is multiple hours. The httpx
+# timeout has to outlive that, so we cap at 6h and rely on the form to
+# warn the user before they kick off something unreasonable.
+BACKTEST_TIMEOUT_SECS = 6 * 60 * 60
 
 
 # ───────────────────────── schemas ──────────────────────────
