@@ -4,8 +4,11 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import AgentActivityFeed from "@/components/AgentActivityFeed";
 import AssetMultiPicker from "@/components/AssetMultiPicker";
+import CalibrationCard from "@/components/CalibrationCard";
 import ForecastingModelPicker from "@/components/ForecastingModelPicker";
+import ManagerHistory from "@/components/ManagerHistory";
 import ModelPicker from "@/components/ModelPicker";
 import PersonalityPicker from "@/components/PersonalityPicker";
 import VoicePicker from "@/components/VoicePicker";
@@ -355,6 +358,24 @@ export default function AgentDetailPage() {
                 </span>
               ))}
             </div>
+          </Section>
+        )}
+
+        {activeCompanyId && (
+          <Section title="Live activity">
+            <AgentActivityFeed companyId={activeCompanyId} agentId={agent.id} />
+          </Section>
+        )}
+
+        {agent.role !== "manager" && activeCompanyId && (
+          <Section title="Manager adjustments">
+            <ManagerHistory companyId={activeCompanyId} employeeId={agent.id} />
+          </Section>
+        )}
+
+        {agent.role !== "manager" && activeCompanyId && agent.forecasting_model && (
+          <Section title={`Forecast calibration · ${agent.forecasting_model}`}>
+            <CalibrationCard companyId={activeCompanyId} model={agent.forecasting_model} />
           </Section>
         )}
 

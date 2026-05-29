@@ -1,6 +1,9 @@
 """Company CRUD — Phase 0: list, create."""
 
-from fastapi import APIRouter, HTTPException, status
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from slugify import slugify
 
 from app.auth import CurrentAccount
@@ -9,6 +12,10 @@ from app.personalities import STARTER_AGENTS, apply_preset
 from app.schemas import Company, CompanyCreate, CompanyList
 
 router = APIRouter(prefix="/companies", tags=["companies"])
+
+
+class CompanyPaperModeUpdate(BaseModel):
+    paper_mode: bool
 
 
 @router.get("", response_model=CompanyList)
@@ -91,6 +98,194 @@ async def create_company(body: CompanyCreate, account_id: CurrentAccount):
         unlocked_contract_types=list(row["unlocked_contract_types"]),
         role="owner",
         created_at=row["created_at"],
+    )
+
+
+@router.patch("/{company_id}/paper-mode", response_model=Company)
+async def set_paper_mode(
+    company_id: UUID, body: CompanyPaperModeUpdate, account_id: CurrentAccount,
+    request: Request,
+):
+    """Flip the company's paper_mode. Going FROM paper TO live is the one
+    operation in the whole app that can lose real money — it's gated by a
+    fresh passkey assertion (≤5 min old, lives in the `tm_passkey_unlock`
+    cookie). The reverse (live → paper) is always allowed; you should
+    never need a passkey to put the brakes on."""
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        if role not in ("owner", "admin"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner/admin only")
+        current = await conn.fetchval(
+            "SELECT paper_mode FROM companies WHERE id = $1", company_id,
+        )
+        if current is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+
+        # Going live — require fresh passkey assertion.
+        if current and not body.paper_mode:
+            from app.routes.passkey import UNLOCK_COOKIE, decode_unlock_jwt
+            unlock = request.cookies.get(UNLOCK_COOKIE)
+            if not unlock:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    "passkey required to leave paper mode — sign with your "
+                    "passkey at /passkeys then retry within 5 minutes",
+                )
+            try:
+                signer = decode_unlock_jwt(unlock)
+            except HTTPException:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    "passkey unlock expired — sign again",
+                )
+            if signer != account_id:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "passkey signer mismatch",
+                )
+
+        row = await conn.fetchrow(
+            """
+            UPDATE companies
+            SET paper_mode = $2, updated_at = now()
+            WHERE id = $1
+            RETURNING id, name, slug, brand_color, base_currency,
+                      paper_mode, current_asset_tier,
+                      unlocked_contract_types, created_at
+            """,
+            company_id, body.paper_mode,
+        )
+
+    return Company(
+        id=row["id"], name=row["name"], slug=row["slug"],
+        brand_color=row["brand_color"], base_currency=row["base_currency"],
+        paper_mode=row["paper_mode"],
+        current_asset_tier=row["current_asset_tier"],
+        unlocked_contract_types=list(row["unlocked_contract_types"]),
+        role=role, created_at=row["created_at"],
+    )
+
+
+class WebSearchConfig(BaseModel):
+    enabled: bool
+    allowed_domains: list[str]
+    blocked_domains: list[str]
+    daily_quota: int
+    used_today: int
+
+
+class WebSearchConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    allowed_domains: list[str] | None = None
+    blocked_domains: list[str] | None = None
+    daily_quota: int | None = Field(default=None, ge=0, le=10_000)
+
+
+@router.get("/{company_id}/web-search-config", response_model=WebSearchConfig)
+async def get_web_search_config(company_id: UUID, account_id: CurrentAccount):
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        row = await conn.fetchrow(
+            """
+            SELECT web_search_enabled, web_search_allowed_domains,
+                   web_search_blocked_domains, web_search_daily_quota
+            FROM companies WHERE id = $1
+            """,
+            company_id,
+        )
+        used = await conn.fetchval(
+            """
+            SELECT count(*) FROM web_search_log
+            WHERE company_id = $1
+              AND created_at >= date_trunc('day', now())
+              AND ok
+            """,
+            company_id,
+        ) or 0
+    return WebSearchConfig(
+        enabled=bool(row["web_search_enabled"]),
+        allowed_domains=list(row["web_search_allowed_domains"] or []),
+        blocked_domains=list(row["web_search_blocked_domains"] or []),
+        daily_quota=int(row["web_search_daily_quota"]),
+        used_today=int(used),
+    )
+
+
+@router.patch("/{company_id}/web-search-config", response_model=WebSearchConfig)
+async def patch_web_search_config(
+    company_id: UUID, body: WebSearchConfigUpdate, account_id: CurrentAccount,
+):
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        if role not in ("owner", "admin"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner/admin only")
+
+        # Normalize domain inputs: strip whitespace, lower-case, drop
+        # leading "https://" or "www." if pasted by mistake.
+        def _norm(ds: list[str] | None) -> list[str] | None:
+            if ds is None:
+                return None
+            out: list[str] = []
+            for d in ds:
+                s = (d or "").strip().lower()
+                if s.startswith("https://"): s = s[8:]
+                if s.startswith("http://"): s = s[7:]
+                if s.startswith("www."): s = s[4:]
+                s = s.rstrip("/")
+                if s:
+                    out.append(s)
+            # dedupe, preserve order
+            seen: set[str] = set()
+            return [d for d in out if not (d in seen or seen.add(d))]
+
+        allowed = _norm(body.allowed_domains)
+        blocked = _norm(body.blocked_domains)
+
+        row = await conn.fetchrow(
+            """
+            UPDATE companies SET
+                web_search_enabled = COALESCE($2, web_search_enabled),
+                web_search_allowed_domains = COALESCE($3, web_search_allowed_domains),
+                web_search_blocked_domains = COALESCE($4, web_search_blocked_domains),
+                web_search_daily_quota = COALESCE($5, web_search_daily_quota),
+                updated_at = now()
+            WHERE id = $1
+            RETURNING web_search_enabled, web_search_allowed_domains,
+                      web_search_blocked_domains, web_search_daily_quota
+            """,
+            company_id, body.enabled, allowed, blocked, body.daily_quota,
+        )
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        used = await conn.fetchval(
+            """
+            SELECT count(*) FROM web_search_log
+            WHERE company_id = $1
+              AND created_at >= date_trunc('day', now())
+              AND ok
+            """,
+            company_id,
+        ) or 0
+    return WebSearchConfig(
+        enabled=bool(row["web_search_enabled"]),
+        allowed_domains=list(row["web_search_allowed_domains"] or []),
+        blocked_domains=list(row["web_search_blocked_domains"] or []),
+        daily_quota=int(row["web_search_daily_quota"]),
+        used_today=int(used),
     )
 
 

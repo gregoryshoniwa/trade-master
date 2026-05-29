@@ -22,6 +22,8 @@ dependencies = [
     "mem0ai>=0.1.30",
     "psycopg[binary,pool]>=3.2.0",
     "sentence-transformers>=3.3.0",
+    # WebAuthn — passkey gate for paper → live trade-mode flip (PLAN Phase 7)
+    "webauthn>=2.5.0",
 ]
 
 [dependency-groups]

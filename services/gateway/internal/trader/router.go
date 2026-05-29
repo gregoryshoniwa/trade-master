@@ -102,13 +102,15 @@ func (r *Router) handleApproved(ctx context.Context, data []byte) {
 		Currency:     currency,
 		Symbol:       intent.Asset,
 	}
-	// Multipliers use `multiplier` and no duration; everything else uses
-	// a tick/second duration. Phase 1 only generates multipliers, but we
-	// keep the branch so adding contract types later is mechanical.
+	// Multipliers carry a `multiplier` + broker-side limit_order for the
+	// stop/target. Everything else — Rise/Fall CALL/PUT, plus any future
+	// CALLE/PUTE/Touch/NoTouch — uses a tick or second duration and no
+	// limit_order. The `default:` branch covers them all because the api
+	// already populates DurationSecs via the contract registry's plugin
+	// (`app/contracts/__init__.py`).
 	switch intent.ContractType {
 	case "MULTUP", "MULTDOWN":
 		params.Multiplier = intent.Multiplier
-		// Attach broker-enforced stop/target so contracts settle.
 		if intent.StopLossAmount > 0 || intent.TakeProfitAmount > 0 {
 			params.LimitOrder = &Limit{
 				StopLoss:   round2(intent.StopLossAmount),

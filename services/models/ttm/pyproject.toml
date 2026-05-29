@@ -10,6 +10,11 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "nats-py>=2.9.0",
     "numpy>=1.26.0,<3.0",
+    # Backtest runs persist directly into the api's backtest_runs table so
+    # they survive api restarts (see app/main.py /backtest).
+    "asyncpg>=0.30.0",
+    # websockets for the backtest's Deriv candle fetch
+    "websockets>=13.0",
     # On linux/arm64 (M1 Docker) and macOS, torch is CPU-only by default.
     # On linux/amd64 prod we'd pin to the +cpu index — defer that to a
     # production override.

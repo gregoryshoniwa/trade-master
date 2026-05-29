@@ -204,7 +204,7 @@ async def create_agent(
 
 @router.patch("/{agent_id}", response_model=Agent)
 async def update_agent(
-    company_id: UUID, agent_id: UUID, body: AgentUpdate, account_id: CurrentAccount
+    company_id: UUID, agent_id: UUID, body: AgentUpdate, account_id: CurrentAccount,
 ):
     if body.personality is not None and body.personality not in PERSONALITIES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid personality")

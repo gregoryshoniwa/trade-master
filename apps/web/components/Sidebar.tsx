@@ -25,7 +25,9 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Agents",
     items: [
       { href: "/agents", label: "Agents", icon: <UsersIcon /> },
+      { href: "/manager", label: "Manager activity", icon: <ClipboardIcon /> },
       { href: "/attribution", label: "Attribution", icon: <BarChartIcon /> },
+      { href: "/edge", label: "Edge report", icon: <PulseIcon /> },
       { href: "/backtests", label: "Backtests", icon: <FlaskIcon /> },
       { href: "/payroll", label: "Payroll", icon: <CoinIcon /> },
     ],
@@ -35,6 +37,8 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/members", label: "Members", icon: <PersonIcon /> },
       { href: "/tiers", label: "Tiers", icon: <LayersIcon /> },
+      { href: "/passkeys", label: "Passkeys", icon: <KeyIcon /> },
+      { href: "/settings", label: "Settings", icon: <GearIcon /> },
     ],
   },
 ];
@@ -186,11 +190,23 @@ function BarChartIcon() {
 function FlaskIcon() {
   return <svg {...svgProps()}><path d="M9 3h6v3l-4 7v6a2 2 0 0 0 2 2h-4a2 2 0 0 0 2-2v-6L9 6V3Z"/><path d="M7.5 14h9"/></svg>;
 }
+function PulseIcon() {
+  return <svg {...svgProps()}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+}
+function KeyIcon() {
+  return <svg {...svgProps()}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>;
+}
 function HistoryIcon() {
   return <svg {...svgProps()}><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><line x1="12" y1="7" x2="12" y2="12"/><line x1="12" y1="12" x2="14" y2="13.5"/></svg>;
 }
 function PersonIcon() {
   return <svg {...svgProps()}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+}
+function ClipboardIcon() {
+  return <svg {...svgProps()}><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>;
+}
+function GearIcon() {
+  return <svg {...svgProps()}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
 }
 function LayersIcon() {
   return <svg {...svgProps()}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>;

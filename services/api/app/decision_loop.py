@@ -32,7 +32,8 @@ import asyncpg
 import nats
 from nats.aio.msg import Msg
 
-from app import bus, strategies
+from app import bus, calibration, strategies
+from app.contracts import pick_for_direction
 from app.db import acquire
 from app.ohlc import get_candles
 from app.risk import evaluate as risk_evaluate
@@ -116,10 +117,15 @@ class DecisionLoop:
         model = fc.get("model")
         asset = fc.get("asset")
         direction = fc.get("point_direction")
-        confidence = float(fc.get("confidence_score") or 0.0)
+        raw_confidence = float(fc.get("confidence_score") or 0.0)
         last_price = float(fc.get("last_price") or 0.0)
         if not model or not asset or direction not in {"up", "down"} or last_price <= 0:
             return
+        # Apply the model's active isotonic calibrator (PLAN §11). If
+        # the model hasn't accumulated enough settled trades yet the
+        # calibrator is a no-op and raw_confidence passes through.
+        # Gating, Kelly sizing, and EV all use the calibrated value.
+        confidence = await calibration.calibrate(model, raw_confidence)
 
         async with acquire() as conn:
             # Match candidates across ALL companies whose forecasting_model is
@@ -128,17 +134,24 @@ class DecisionLoop:
             rows = await conn.fetch(
                 """
                 SELECT a.id, a.company_id, a.name, a.role, a.personality,
-                       a.strategies, a.allowed_assets,
+                       a.strategies, a.allowed_assets, a.allowed_contract_types,
                        a.min_confidence_threshold, a.kelly_fraction,
                        a.min_payoff_ratio, a.max_position_size_usd,
                        a.allocated_balance_usd, a.trade_mode,
                        a.is_active, a.is_paused, a.target_holding_secs,
                        a.forecasting_model, a.trade_selection_mode,
-                       a.allowed_combinations
+                       a.allowed_combinations,
+                       c.current_asset_tier, c.unlocked_contract_types
                 FROM agents a
+                JOIN companies c ON c.id = a.company_id
                 WHERE a.role = 'employee'
                   AND a.is_active = TRUE
                   AND a.is_paused = FALSE
+                  -- Cooling-off: skip agents currently on ice after a loss
+                  -- streak. `cooling_off_until` is NULL for everyone who
+                  -- isn't cooling off (and is cleared as time passes by
+                  -- the natural < now() comparison).
+                  AND (a.cooling_off_until IS NULL OR a.cooling_off_until < now())
                   AND a.forecasting_model = $2
                   AND $1 >= a.min_confidence_threshold
                 """,
@@ -147,7 +160,9 @@ class DecisionLoop:
 
         for r in rows:
             try:
-                await self._maybe_intent(r, fc, direction, confidence, last_price, asset)
+                await self._maybe_intent(
+                    r, fc, direction, confidence, raw_confidence, last_price, asset,
+                )
             except Exception:
                 log.exception("intent generation failed agent=%s", r["id"])
 
@@ -157,6 +172,7 @@ class DecisionLoop:
         fc: dict[str, Any],
         direction: str,
         confidence: float,
+        raw_confidence: float,
         last_price: float,
         asset: str,
     ) -> None:
@@ -186,22 +202,39 @@ class DecisionLoop:
         allocation = float(agent["allocated_balance_usd"])
         proposed = max(1.0, allocation * kelly * confidence)
 
-        # Contract type: simple Phase 1 mapping. Tier-aware contract
-        # selection comes when we have per-asset contract registry.
-        contract_type = "MULTUP" if direction == "up" else "MULTDOWN"
-        multiplier = SYMBOL_MULTIPLIER.get(asset, DEFAULT_MULTIPLIER)
-
-        # Stop / target. 0.5% stop; target = stop × payoff_ratio.
+        # Pick a contract plugin honouring the company's tier + agent's
+        # allowed_contract_types. Returns None when neither MULTUP/DOWN
+        # nor CALL/PUT is allowed — we skip the intent rather than fall
+        # back to something the operator didn't sanction.
+        plugin = pick_for_direction(
+            direction=direction,
+            company_tier=int(agent["current_asset_tier"] or 1),
+            company_unlocked=list(agent["unlocked_contract_types"] or []),
+            agent_allowed=list(agent["allowed_contract_types"] or []),
+        )
+        if plugin is None:
+            log.info(
+                "no allowed contract for agent=%s direction=%s tier=%s",
+                agent["name"], direction, agent["current_asset_tier"],
+            )
+            return
         payoff = float(agent["min_payoff_ratio"])
         stop_pct = DEFAULT_STOP_PCT
-        if direction == "up":
-            stop = last_price * (1.0 - stop_pct)
-            target = last_price * (1.0 + stop_pct * payoff)
-        else:
-            stop = last_price * (1.0 + stop_pct)
-            target = last_price * (1.0 - stop_pct * payoff)
-
-        duration_secs = int(agent["target_holding_secs"] or 600)
+        params = plugin.build(
+            direction=direction,
+            proposed_stake_usd=proposed,
+            last_price=last_price,
+            stop_pct=stop_pct,
+            payoff_ratio=payoff,
+            asset=asset,
+            multiplier_default=SYMBOL_MULTIPLIER.get(asset, DEFAULT_MULTIPLIER),
+            target_holding_secs=int(agent["target_holding_secs"] or 600),
+        )
+        contract_type = params.contract_type
+        multiplier = params.multiplier or 0
+        stop = params.stop_loss if params.stop_loss is not None else last_price
+        target = params.take_profit if params.take_profit is not None else last_price
+        duration_secs = params.duration_secs or int(agent["target_holding_secs"] or 600)
 
         # ── Trade-selection-mode gate (PLAN §7) ─────────────────────────
         # EV in USD using the per-signal confidence as a win-probability
@@ -263,7 +296,14 @@ class DecisionLoop:
                 "model": fc.get("model"),
                 "asof_ts": int(fc["asof_ts"]),
                 "direction": direction,
+                # `confidence` is the calibrated value used for gating
+                # and sizing. `raw_confidence` is what the forecaster
+                # actually returned. We keep both so postmortems can
+                # show "the model said 65%, calibrator mapped that to
+                # 51%, the agent's floor is 0.50 so we still traded".
                 "confidence": confidence,
+                "raw_confidence": raw_confidence,
+                "calibrated": abs(confidence - raw_confidence) > 1e-9,
                 "last_price": last_price,
                 "horizon_steps": fc.get("horizon_steps"),
             },

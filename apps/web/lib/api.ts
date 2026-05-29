@@ -434,6 +434,45 @@ export const api = {
       `/api/v1/companies/${companyId}/attribution?window=${window}`,
     ),
 
+  // ─── edge report ───
+  getEdgeReport: (companyId: string, window: EdgeWindow = "30d") =>
+    request<EdgeReport>(
+      `/api/v1/companies/${companyId}/edge?window=${window}`,
+    ),
+
+  // ─── company paper-mode flip ───
+  setCompanyPaperMode: (companyId: string, paperMode: boolean) =>
+    request<Company>(`/api/v1/companies/${companyId}/paper-mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ paper_mode: paperMode }),
+    }),
+
+  // ─── passkey ───
+  passkeyStatus: () =>
+    request<{ has_passkey: boolean; count: number }>(
+      "/api/v1/auth/passkey/status",
+    ),
+  passkeyRegisterOptions: () =>
+    request<{ options_json: string }>(
+      "/api/v1/auth/passkey/register/options",
+      { method: "POST" },
+    ),
+  passkeyRegisterVerify: (credentialJson: string, name?: string) =>
+    request<{ ok: true }>("/api/v1/auth/passkey/register/verify", {
+      method: "POST",
+      body: JSON.stringify({ credential_json: credentialJson, name }),
+    }),
+  passkeyAssertOptions: () =>
+    request<{ options_json: string }>(
+      "/api/v1/auth/passkey/assert/options",
+      { method: "POST" },
+    ),
+  passkeyAssertVerify: (credentialJson: string) =>
+    request<{ ok: true; expires_in: number }>(
+      "/api/v1/auth/passkey/assert/verify",
+      { method: "POST", body: JSON.stringify({ credential_json: credentialJson }) },
+    ),
+
   payroll: (companyId: string, window: PayrollWindow = "30d") =>
     request<PayrollSummary>(
       `/api/v1/companies/${companyId}/payroll?window=${window}`,
@@ -506,6 +545,124 @@ export const api = {
     request<Postmortem>(
       `/api/v1/companies/${companyId}/intents/${intentId}/postmortem`,
     ),
+
+  // ─── forecast calibration ───
+  getCalibrator: (companyId: string, model: string) =>
+    request<CalibratorStatus>(
+      `/api/v1/companies/${companyId}/calibrators/${encodeURIComponent(model)}`,
+    ),
+
+  // ─── per-agent activity feed ───
+  getAgentActivity: (companyId: string, agentId: string, limit = 50) =>
+    request<AgentActivityFeed>(
+      `/api/v1/companies/${companyId}/agents/${agentId}/activity?limit=${limit}`,
+    ),
+
+  // ─── web search config ───
+  getWebSearchConfig: (companyId: string) =>
+    request<WebSearchConfig>(`/api/v1/companies/${companyId}/web-search-config`),
+
+  updateWebSearchConfig: (companyId: string, body: WebSearchConfigUpdate) =>
+    request<WebSearchConfig>(
+      `/api/v1/companies/${companyId}/web-search-config`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+
+  // ─── manager actions (audit) ───
+  listManagerActions: (
+    companyId: string,
+    opts?: {
+      employeeId?: string;
+      actionKind?: "review" | "adjust" | "pause" | "resume";
+      limit?: number;
+      offset?: number;
+    },
+  ) => {
+    const p = new URLSearchParams();
+    if (opts?.employeeId) p.set("employee_id", opts.employeeId);
+    if (opts?.actionKind) p.set("action_kind", opts.actionKind);
+    if (opts?.limit != null) p.set("limit", String(opts.limit));
+    if (opts?.offset != null) p.set("offset", String(opts.offset));
+    const qs = p.toString();
+    return request<ManagerActionPage>(
+      `/api/v1/companies/${companyId}/manager-actions${qs ? `?${qs}` : ""}`,
+    );
+  },
+};
+
+export type ManagerAction = {
+  id: string;
+  company_id: string;
+  manager_agent_id: string;
+  manager_name: string | null;
+  employee_agent_id: string | null;
+  employee_name: string | null;
+  action_kind: "review" | "adjust" | "pause" | "resume";
+  field_name: string | null;
+  before_value: unknown;
+  after_value: unknown;
+  reason: string | null;
+  llm_narrative: string | null;
+  created_at: string;
+};
+
+export type ManagerActionPage = {
+  actions: ManagerAction[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type CalibratorPoint = { x: number; y: number };
+
+export type WebSearchConfig = {
+  enabled: boolean;
+  allowed_domains: string[];
+  blocked_domains: string[];
+  daily_quota: number;
+  used_today: number;
+};
+
+export type WebSearchConfigUpdate = {
+  enabled?: boolean;
+  allowed_domains?: string[];
+  blocked_domains?: string[];
+  daily_quota?: number;
+};
+
+export type AgentActivityEvent = {
+  ts: string;
+  kind:
+    | "intent_opened"
+    | "intent_executed"
+    | "intent_closed"
+    | "intent_rejected"
+    | "manager_action"
+    | "chat_message";
+  title: string;
+  detail: string | null;
+  tone: "bull" | "bear" | "accent" | "muted";
+  refs: Record<string, string>;
+};
+
+export type AgentActivityFeed = {
+  events: AgentActivityEvent[];
+  fetched_at: string;
+};
+
+export type CalibratorStatus = {
+  forecasting_model: string;
+  fitted_at: string | null;
+  window_days: number | null;
+  n_samples: number;
+  method: "isotonic" | "platt" | null;
+  raw_brier: number | null;
+  calibrated_brier: number | null;
+  raw_ece: number | null;
+  calibrated_ece: number | null;
+  artifact: CalibratorPoint[];
+  state: "calibrated" | "insufficient_data" | "never_fit";
+  min_samples_required: number;
 };
 
 export type CloseResult = {
@@ -804,6 +961,63 @@ export type SafetyState = {
   kill_switch_at: string | null;
   daily_loss_limit_usd: number | null;
   today_realized_pnl_usd: number;
+  insurance_balance_usd: number;
+  recent_sweeps: SweepRecord[];
+  cooling_off_agents: CoolingOffAgent[];
+};
+
+export type SweepRecord = {
+  id: string;
+  agent_name: string | null;
+  amount_usd: number;
+  window_realized_pnl_usd: number;
+  allocation_usd: number;
+  reason: string;
+  created_at: string;
+};
+
+export type CoolingOffAgent = {
+  agent_id: string;
+  agent_name: string;
+  cooling_off_until: string;
+  streak_at_trigger: number;
+};
+
+// ─── edge report ───
+
+export type EdgeWindow = "7d" | "30d" | "90d" | "all";
+
+export type AgentEdge = {
+  agent_id: string;
+  agent_name: string;
+  forecasting_model: string;
+  is_active: boolean;
+  is_paused: boolean;
+  live_n: number;
+  live_wins: number;
+  live_losses: number;
+  live_hit_rate: number | null;
+  live_avg_pnl_usd: number | null;
+  live_total_pnl_usd: number;
+  live_avg_confidence: number | null;
+  backtest_hit_rate: number | null;
+  backtest_run_id: string | null;
+  backtest_n_forecasts: number | null;
+  hit_rate_gap_pp: number | null;
+  verdict: string;
+  verdict_tone: "bull" | "bear" | "muted";
+  calibration_method: "isotonic" | "platt" | null;
+  calibration_n_samples: number | null;
+  calibration_brier_raw: number | null;
+  calibration_brier_calibrated: number | null;
+  calibration_ece_raw: number | null;
+  calibration_ece_calibrated: number | null;
+};
+
+export type EdgeReport = {
+  window: EdgeWindow;
+  generated_at: string;
+  agents: AgentEdge[];
 };
 
 // ─── attribution types ───

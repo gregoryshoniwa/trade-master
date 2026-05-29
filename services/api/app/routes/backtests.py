@@ -153,21 +153,20 @@ def _row(r: asyncpg.Record) -> BacktestRun:
 # ───────────────────────── runner ──────────────────────────
 
 
-async def _run_backtest(run_id: UUID, body: BacktestCreate) -> None:
-    """Background task — POSTs to the model service, persists result."""
+async def _submit_backtest(run_id: UUID, body: BacktestCreate) -> None:
+    """Hand the run off to the model service and return. The model service
+    owns the lifecycle from here — it writes `running` → `done`/`failed`
+    + the result columns directly to the same backtest_runs row. That
+    way an api rebuild (which happens often during dev) doesn't kill an
+    in-flight backtest, which was the whole reason the user kept seeing
+    `api restarted before run completed`."""
     endpoint = MODEL_ENDPOINTS.get(body.model_key)
     if endpoint is None:
         await _mark_failed(run_id, f"no model endpoint for {body.model_key}")
         return
 
-    started = datetime.utcnow()
-    async with acquire() as conn:
-        await conn.execute(
-            "UPDATE backtest_runs SET status='running', started_at=$2 WHERE id=$1",
-            run_id, started,
-        )
-
     payload = {
+        "run_id": str(run_id),   # ← tells the model service to own the lifecycle
         "symbols": body.symbols,
         "granularity": body.granularity_secs,
         "count": body.bar_count,
@@ -176,12 +175,11 @@ async def _run_backtest(run_id: UUID, body: BacktestCreate) -> None:
         "stop_pct": body.stop_pct,
         "payoff": body.payoff_ratio,
     }
+    # Tight timeout — the model service should ack in seconds. The actual
+    # work runs there afterwards.
     try:
-        async with httpx.AsyncClient(timeout=BACKTEST_TIMEOUT_SECS) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(endpoint, json=payload)
-            # Pull the upstream's `detail` out of a Pydantic validation error
-            # so the row reads "horizon: ensure value <= 24" instead of the
-            # raw httpx URL+status string the browser used to land on.
             if r.status_code >= 400:
                 try:
                     detail = r.json().get("detail")
@@ -195,40 +193,11 @@ async def _run_backtest(run_id: UUID, body: BacktestCreate) -> None:
                 log.warning("backtest %s rejected by %s — %s", run_id, endpoint, msg)
                 await _mark_failed(run_id, msg[:500])
                 return
-            result = r.json()
     except Exception as e:
-        log.exception("backtest %s failed", run_id)
-        await _mark_failed(run_id, str(e)[:500])
+        log.exception("backtest %s submit failed", run_id)
+        await _mark_failed(run_id, f"submit failed: {e}"[:500])
         return
-
-    summary = result.get("summary") or {}
-    finished = datetime.utcnow()
-    duration = int((finished - started).total_seconds())
-    async with acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE backtest_runs SET
-                status = 'done',
-                result_json = $2::jsonb,
-                n_forecasts = $3,
-                overall_hit_rate = $4,
-                overall_brier = $5,
-                overall_pnl_pct = $6,
-                finished_at = $7,
-                duration_secs = $8
-            WHERE id = $1
-            """,
-            run_id,
-            json.dumps(result),
-            summary.get("n_forecasts"),
-            summary.get("overall_hit_rate"),
-            summary.get("overall_brier"),
-            summary.get("overall_pnl_pct"),
-            finished, duration,
-        )
-    log.info("backtest %s done — %d forecasts, hit=%s, brier=%s",
-             run_id, summary.get("n_forecasts"), summary.get("overall_hit_rate"),
-             summary.get("overall_brier"))
+    log.info("backtest %s handed off to %s", run_id, endpoint)
 
 
 async def _mark_failed(run_id: UUID, reason: str) -> None:
@@ -246,25 +215,29 @@ async def _mark_failed(run_id: UUID, reason: str) -> None:
 
 
 async def reap_orphans() -> None:
-    """Mark any pending/running rows as failed on api boot. They're orphans
-    from a previous process — the background tasks died with the old worker,
-    no one's coming back for them. Called from app lifespan."""
+    """Mark TRULY-stuck rows as failed. The model service now owns the run
+    lifecycle — it writes the row directly when finished — so an api
+    restart no longer orphans an in-flight backtest. We only fail rows
+    that have been sitting in pending/running for longer than the
+    backtest timeout, which means the upstream task itself died (kronos
+    crash, the model couldn't start) and there's no one coming back."""
     async with acquire() as conn:
         n = await conn.fetchval(
-            """
+            f"""
             WITH orphaned AS (
                 UPDATE backtest_runs
-                SET status='failed',
-                    error_message='api restarted before run completed',
-                    finished_at=now()
+                SET status = 'failed',
+                    error_message = 'model service stopped before run completed',
+                    finished_at = now()
                 WHERE status IN ('pending', 'running')
+                  AND COALESCE(started_at, created_at) < now() - interval '{BACKTEST_TIMEOUT_SECS} seconds'
                 RETURNING 1
             )
             SELECT count(*) FROM orphaned
             """,
         )
     if n:
-        log.warning("reaped %d orphaned backtest runs", n)
+        log.warning("reaped %d backtest runs older than the timeout", n)
 
 
 # ───────────────────────── routes ──────────────────────────
@@ -305,7 +278,7 @@ async def create_backtest(
 
     # Spawn the actual work; the request returns now so the UI can render
     # the "running…" row immediately.
-    bg.add_task(_run_backtest, row["id"], body)
+    bg.add_task(_submit_backtest, row["id"], body)
     return _row(row)
 
 

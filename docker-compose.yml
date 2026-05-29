@@ -141,8 +141,13 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       NATS_URL: nats://nats:4222
+      # The model service writes backtest results directly to the api's
+      # postgres so they survive an api restart mid-run.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
       LOG_LEVEL: info
       CONTEXT_LENGTH: 512
       PREDICTION_LENGTH: 96
@@ -166,8 +171,11 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       NATS_URL: nats://nats:4222
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
       LOG_LEVEL: info
       GRANULARITY: 60
       CONTEXT_LENGTH: 256

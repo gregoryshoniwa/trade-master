@@ -20,12 +20,34 @@ from app.db import acquire
 router = APIRouter(prefix="/companies/{company_id}", tags=["safety"])
 
 
+class SweepRecord(BaseModel):
+    id: UUID
+    agent_name: str | None
+    amount_usd: float
+    window_realized_pnl_usd: float
+    allocation_usd: float
+    reason: str
+    created_at: datetime
+
+
+class CoolingOffAgent(BaseModel):
+    agent_id: UUID
+    agent_name: str
+    cooling_off_until: datetime
+    streak_at_trigger: int
+
+
 class SafetyState(BaseModel):
     kill_switch_active: bool
     kill_switch_reason: str | None
     kill_switch_at: datetime | None
     daily_loss_limit_usd: float | None
     today_realized_pnl_usd: float
+    # Profit sweep + cooling-off — added so the dashboard can show how
+    # much has been moved into insurance and which agents are paused.
+    insurance_balance_usd: float
+    recent_sweeps: list[SweepRecord]
+    cooling_off_agents: list[CoolingOffAgent]
 
 
 class KillSwitchRequest(BaseModel):
@@ -59,7 +81,7 @@ async def get_safety(company_id: UUID, account_id: CurrentAccount):
         row = await conn.fetchrow(
             """
             SELECT c.kill_switch_active, c.kill_switch_reason, c.kill_switch_at,
-                   c.daily_loss_limit_usd,
+                   c.daily_loss_limit_usd, c.insurance_balance_usd,
                    COALESCE((
                        SELECT sum(pnl_usd) FROM trade_postmortems
                        WHERE company_id = c.id
@@ -70,14 +92,58 @@ async def get_safety(company_id: UUID, account_id: CurrentAccount):
             """,
             company_id,
         )
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+
+        sweeps = await conn.fetch(
+            """
+            SELECT s.id, s.amount_usd, s.window_realized_pnl_usd,
+                   s.allocation_usd, s.reason, s.created_at,
+                   a.name AS agent_name
+            FROM profit_sweeps s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE s.company_id = $1
+            ORDER BY s.created_at DESC
+            LIMIT 20
+            """,
+            company_id,
+        )
+        cooling = await conn.fetch(
+            """
+            SELECT id, name, cooling_off_until,
+                   cooling_off_loss_streak AS streak
+            FROM agents
+            WHERE company_id = $1
+              AND cooling_off_until IS NOT NULL
+              AND cooling_off_until > now()
+            ORDER BY cooling_off_until
+            """,
+            company_id,
+        )
+
     return SafetyState(
         kill_switch_active=row["kill_switch_active"],
         kill_switch_reason=row["kill_switch_reason"],
         kill_switch_at=row["kill_switch_at"],
         daily_loss_limit_usd=float(row["daily_loss_limit_usd"]) if row["daily_loss_limit_usd"] is not None else None,
         today_realized_pnl_usd=float(row["today_pnl"]),
+        insurance_balance_usd=float(row["insurance_balance_usd"] or 0.0),
+        recent_sweeps=[
+            SweepRecord(
+                id=s["id"], agent_name=s["agent_name"],
+                amount_usd=float(s["amount_usd"]),
+                window_realized_pnl_usd=float(s["window_realized_pnl_usd"]),
+                allocation_usd=float(s["allocation_usd"]),
+                reason=s["reason"], created_at=s["created_at"],
+            ) for s in sweeps
+        ],
+        cooling_off_agents=[
+            CoolingOffAgent(
+                agent_id=c["id"], agent_name=c["name"],
+                cooling_off_until=c["cooling_off_until"],
+                streak_at_trigger=int(c["streak"] or 0),
+            ) for c in cooling
+        ],
     )
 
 

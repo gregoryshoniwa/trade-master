@@ -236,14 +236,54 @@ async def evaluate(
     # When that lands, replace this with a real LossSoFar query.
     checks.append(RiskCheck("daily_dd_cap", True, detail="P&L tracking not yet wired"))
 
+    # ── one open position per (agent, asset) ────────────────────
+    # Prevents the 304-overlap bug: an agent shouldn't be long and
+    # short the same instrument at the same time, and stacking same-
+    # direction positions on the same asset every minute as fresh
+    # signals fire is "over-trading" by any sensible read. The default
+    # is conservative — one open contract per asset, regardless of
+    # direction. Future: add an `allow_pyramid` agent flag for traders
+    # that want to scale in.
+    existing_open = await conn.fetchrow(
+        """
+        SELECT id, direction, stake_usd, created_at
+        FROM trade_intents
+        WHERE agent_id = $1
+          AND asset = $2
+          AND status IN ('pending_approval','approved','auto_approved','executed')
+          AND closed_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        agent_id, asset,
+    )
+    if existing_open is not None:
+        conflict = "opposite-direction" if existing_open["direction"] != _direction_for_contract(contract_type) else "same-direction"
+        checks.append(RiskCheck(
+            "no_concurrent_position", False,
+            detail=(
+                f"already holds {existing_open['direction']} ${float(existing_open['stake_usd']):.2f} on {asset} "
+                f"since {existing_open['created_at']:%Y-%m-%d %H:%M} ({conflict} conflict)"
+            ),
+        ))
+        return _fail(f"already has an open position on {asset}", checks)
+    checks.append(RiskCheck("no_concurrent_position", True))
+
     # ── allocation availability ─────────────────────────────────
-    # Sum of stake_usd for pending+approved+executed today as a proxy for
-    # "currently committed" until we have a real allocations ledger.
+    # Real "currently committed" = open positions across the agent's
+    # lifetime. We sum stake_usd for any intent that hasn't closed yet,
+    # regardless of when it was created — an open position is a live
+    # claim on the agent's allocation budget.
+    #
+    # The previous version of this check omitted `executed` status,
+    # which is why an agent could pile up dozens of simultaneous open
+    # positions without ever tripping the cap.
     committed = await conn.fetchval(
         """
         SELECT COALESCE(sum(stake_usd), 0) FROM trade_intents
         WHERE agent_id = $1
-          AND status IN ('pending_approval','approved','auto_approved')
+          AND status IN ('pending_approval','approved','auto_approved','executed')
+          AND closed_at IS NULL
         """,
         agent_id,
     )
@@ -252,12 +292,22 @@ async def evaluate(
     alloc_ok = available >= capped_stake
     checks.append(RiskCheck(
         "allocation_available", alloc_ok,
-        detail=f"available ${available:.2f} vs needed ${capped_stake:.2f}",
+        detail=f"available ${available:.2f} vs needed ${capped_stake:.2f} (committed ${committed:.2f})",
     ))
     if not alloc_ok:
         return _fail("insufficient allocation", checks)
 
     return RiskVerdict(ok=True, reason=None, checks=checks, applied_stake_usd=capped_stake)
+
+
+def _direction_for_contract(contract_type: str) -> str:
+    """Map MULTUP/CALL → 'up', MULTDOWN/PUT → 'down'. Used only for
+    pretty-printing the no_concurrent_position conflict reason."""
+    if contract_type in ("MULTUP", "CALL"):
+        return "up"
+    if contract_type in ("MULTDOWN", "PUT"):
+        return "down"
+    return contract_type.lower()
 
 
 def _fail(reason: str, checks: list[RiskCheck]) -> RiskVerdict:
