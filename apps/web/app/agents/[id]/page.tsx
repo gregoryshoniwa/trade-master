@@ -40,6 +40,7 @@ export default function AgentDetailPage() {
   const [allowedAssets, setAllowedAssets] = useState<string[]>([]);
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [dailyTarget, setDailyTarget] = useState<string>("");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -59,6 +60,9 @@ export default function AgentDetailPage() {
         setAllowedAssets(a.allowed_assets ?? []);
         setVoiceId(a.voice_id);
         setVoiceEnabled(a.voice_enabled);
+        setDailyTarget(
+          a.daily_profit_target_usd != null ? String(a.daily_profit_target_usd) : "",
+        );
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -75,6 +79,8 @@ export default function AgentDetailPage() {
     setBusy(true);
     setError(null);
     try {
+      const tgtTrimmed = dailyTarget.trim();
+      const tgt = tgtTrimmed === "" ? 0 : Math.max(0, Math.min(100000, Number(tgtTrimmed) || 0));
       const updated = await api.updateAgent(activeCompanyId, agent.id, {
         name,
         personality,
@@ -87,6 +93,7 @@ export default function AgentDetailPage() {
         allowed_assets: allowedAssets,
         voice_id: voiceId,
         voice_enabled: voiceEnabled,
+        daily_profit_target_usd: tgt,
       });
       setAgent(updated);
       setDirty(false);
@@ -357,6 +364,23 @@ export default function AgentDetailPage() {
                 className="num w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-sm outline-none focus:border-bull"
               />
             </Field>
+            {agent.role !== "manager" && (
+              <Field label="Daily profit target (USD)">
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  step="0.01"
+                  placeholder="0 = no target"
+                  value={dailyTarget}
+                  onChange={(e) => markDirty(setDailyTarget)(e.target.value)}
+                  className="num w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-sm outline-none focus:border-bull"
+                />
+                <span className="mt-1 block text-[10px] text-text-mute">
+                  Per-employee target. Decision loop applies the stricter of this and the company target.
+                </span>
+              </Field>
+            )}
             <Readonly
               label="Current allocation"
               value={FMT_USD.format(agent.allocated_balance_usd)}

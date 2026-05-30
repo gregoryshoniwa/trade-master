@@ -84,6 +84,10 @@ def _row_to_agent(r: asyncpg.Record) -> Agent:
         min_payoff_ratio=float(r["min_payoff_ratio"]),
         max_trades_per_day=r["max_trades_per_day"],
         target_holding_secs=r["target_holding_secs"],
+        daily_profit_target_usd=(
+            float(r["daily_profit_target_usd"])
+            if r["daily_profit_target_usd"] is not None else None
+        ),
         event_aware=r["event_aware"],
         aggression_index=r["aggression_index"],
         detected_personality=r["detected_personality"],

@@ -206,6 +206,7 @@ class AgentUpdate(BaseModel):
     min_payoff_ratio: float | None = None
     max_trades_per_day: int | None = None
     target_holding_secs: int | None = None
+    daily_profit_target_usd: float | None = None
     event_aware: bool | None = None
     trade_mode: str | None = None
     system_prompt_addendum: str | None = None
@@ -237,6 +238,7 @@ class Agent(BaseModel):
     min_payoff_ratio: float
     max_trades_per_day: int
     target_holding_secs: int | None
+    daily_profit_target_usd: float | None
     event_aware: bool
     aggression_index: int
     detected_personality: str | None

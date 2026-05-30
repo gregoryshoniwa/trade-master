@@ -1,8 +1,9 @@
 # TradeMaster
 
 AI-orchestrated multi-model trading platform on Deriv. Multi-tenant SaaS,
-launching in Zimbabwe. **Phase 0–4 mostly shipped; running live A/B on the
-Deriv demo account today.**
+launching in Zimbabwe. **Phases 0–5 shipped + the agentic loop (Manager
+agent running 1:1s with employees, CEO follow-ups, conformal calibration,
+web search). Running live A/B on the Deriv demo account today.**
 
 See [PLAN.md](PLAN.md) for the full architecture spec and current
 phase-by-phase status. AI session notes live in [AGENTS.md](AGENTS.md).
@@ -15,7 +16,7 @@ Requires Docker Desktop (the stack runs CPU TSFMs on an M1 MacBook Air with
 8 GB just fine). For native Go / Node dev, you need Go 1.22+ and Node 22+.
 
 ```bash
-cp .env.example .env       # fill in DERIV_API_TOKEN + your LLM API keys
+cp .env.example .env       # fill in DERIV_API_TOKEN + LLM keys + optional TAVILY_API_KEY
 make dev                   # bring the full stack up (postgres + 8 services)
 make logs                  # tail everything
 make migrate               # apply pending DB migrations
@@ -23,7 +24,22 @@ make down                  # stop
 make clean                 # stop + wipe volumes (destroys local data)
 ```
 
+Required environment:
+- `DERIV_API_TOKEN` — Deriv demo or live account token
+- `ANTHROPIC_API_KEY` — Claude (default Manager brain)
+- `GEMINI_API_KEY` — Gemini Live (voice) + Gemini text models
+
+Optional but recommended:
+- `TAVILY_API_KEY` — cleaner AI-tuned web-search snippets. Without it,
+  `web_search` falls back to DuckDuckGo HTML which is free but noisier.
+  Switchable per-company at `/settings`.
+- `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `OPENAI_API_KEY` — extra
+  text models for the per-agent LLM picker.
+
 Then open <http://localhost:3000> — you'll land on the live dashboard.
+First-run flow: sign up → create company → seven starter agents
+(Alpha manager + Trendy/Brakey/Rocky/Rev/Action employees + Scout
+research) are seeded automatically.
 
 ---
 
@@ -149,39 +165,81 @@ live tick + forecast stream.
   rail with live unrealized P&L, click any position to focus the chart.
 - **Theming** — dark default + light mode toggle, conventional trading
   palette (TradingView-style accent + classic green/red).
-- **Walk-forward backtest harness** — `docker compose run --rm ttm
-  python -m app.backtest` — proved TTM has no stable directional edge
-  on 60s candles (overall 51–55% hit-rate, unstable across timeframes).
+- **Walk-forward backtest harness** + **web Backtests UI** (`/backtests`)
+  — Kronos and TTM both backtestable in-browser; results push into a
+  reviewable run history. Apply a backtest's recommendation directly to
+  an agent's config in one click.
+- **Forecast calibration** (`/agents/<id>` → Forecast calibration card)
+  — daily isotonic / Platt fit on each model's recent settled trades;
+  the decision loop applies the calibrated probability before the
+  threshold gate. Verified: TTM Brier 0.157 → 0.088, Kronos-base
+  0.351 → 0.236 (overconfident, decision gate now bites correctly).
+- **Manager Agent loop** (`/meetings`) — every 4h the manager (Alpha)
+  reviews team digest, makes targeted adjustments to employees (kelly
+  fraction, confidence threshold, payoff ratio, allocation, daily
+  target), and persists a full LLM transcript per review or 1:1.
+  CEO can trigger reviews on demand, hold ad-hoc 1:1s with any
+  employee, and follow up on any meeting from its detail page — the
+  manager replays the full transcript and responds in-thread.
+- **Employee → Manager messaging** — employees drop meeting requests
+  when they notice a problem (loss streak, bad asset); manager picks
+  up the queue at the next review and addresses each in summary.
+- **Goal-aware sizing** — CEO sets a daily profit target on Settings;
+  manager can set per-employee targets via tool. Decision loop reads
+  today's realized P&L vs the more restrictive of company/employee
+  target and stair-step throttles stake (≥50% → 75% sizing,
+  ≥80% → halve, ≥100% → skip new trades). Throttle reason persists
+  into the postmortem.
+- **Voice for every agent** — Gemini Live ephemeral-token WSS direct
+  from browser; per-agent voice picker (10 voices, "voice via Gemini
+  Live · text brain: Claude" badge when an agent's chat model is
+  non-Google). Voice button on agent profile and on every meeting page.
+- **Internet search tool** — `web_search` available to all agents,
+  gated per-company at `/settings`: enable/disable, allow/block
+  domains, daily quota, backend choice (auto / Tavily / DuckDuckGo).
+  Audit log in `web_search_log`. Search results render as clickable
+  source cards in meeting transcripts.
+- **Notifications** — bell in the topbar, polls every 30s, fires on
+  every meeting completion (review + 1:1 + follow-up). Links straight
+  to the meeting detail page.
+- **Trading discipline gates** — `no_concurrent_position` per
+  (agent, asset) refuses opposing or stacked trades; allocation
+  accounting fix counts every open intent (not just pending). Both
+  rejections render in the agent's live activity feed with the
+  specific check name.
+- **Per-agent live activity feed** — unified timeline merging trade
+  intents (opened / filled / closed / rejected), postmortems, manager
+  actions, and chat turns. Polls every 5s with a "+N new" pulse.
+- **WebAuthn passkey gate** — leaving paper-mode requires a fresh
+  passkey assertion on the active company; assertion JWT cookie
+  expires after 5 minutes. Passkeys registered on `/passkeys`.
+- **Symbol icons everywhere** — `frxEURUSD` renders as 🇪🇺🇺🇸 in the
+  picker, postmortems, history, agents rail, and inline in any meeting
+  transcript that mentions an asset by code.
 
 ---
 
-## What's next (deferred roadmap)
+## What's next
 
-In rough priority order — none of these block running the platform today,
-but each unlocks meaningful capability:
+The agentic loop is feature-complete enough to run. Open work mostly
+falls under "more models, more sources, more polish":
 
-1. **LangGraph LLM decision brain** — replace the mechanical decision
-   loop with a Manager Agent that synthesizes employee StrategySignals +
-   calendar context via Gemini/Claude into a reasoned go/no-go. The
-   single biggest pending architectural piece.
-2. **Chronos-Bolt-small + TimesFM 2.5 + Kronos-base** — three more
-   forecasting services to enable a real ensemble. Pattern is now well-
-   established (mirror `services/models/kronos`).
-3. **Voice via Gemini Live** — per-agent voice config, voice modal,
-   transcript audit. PLAN §12.
-4. **Sentiment ingestion** — Polymarket / Kalshi / Manifold / Finnhub
-   news. PLAN §5 / §15.
-5. **WebAuthn live-trade unlock** + **14-day paper gate** — required
-   before any real-money path. PLAN §22 / §27.
-6. **Backtest UI** — promote `app.backtest` to a web view so non-CLI
-   operators can evaluate models per instrument.
-7. **Conformal calibration** on TSFM outputs — replace heuristic
-   confidence with statistically-grounded coverage intervals.
-8. **Stripe + crypto-pay** + **ZW Shona translations** + **Lite mode** —
-   real onboarding.
-9. **Mobile** (PWA install + React Native).
-10. **Cloud GPU tier** (Chronos-2 + FinCast 1B) — opt-in for heavier
-    models.
+1. **More forecasting models** — Chronos-Bolt-small, TimesFM 2.5,
+   Kronos-base ensemble. Pattern is well-established (mirror
+   `services/models/kronos`).
+2. **Sentiment ingestion** — Polymarket / Kalshi / Manifold / Finnhub
+   news. PLAN §5 / §15. The manager already has `web_search`; adding
+   structured sentiment moves it from ad-hoc lookups to systematic
+   signal.
+3. **Conformal calibration v2** — currently per-model only; per
+   (model, asset) is the natural next granularity. Held off until
+   per-asset N reaches the isotonic floor (≥ 80 settled per pair).
+4. **14-day paper gate** before any real-money path. PLAN §27.
+5. **Stripe + crypto-pay** + **ZW Shona translations** + **Lite mode**
+   — real onboarding.
+6. **Mobile** (PWA install + React Native).
+7. **Cloud GPU tier** (Chronos-2 + FinCast 1B) — opt-in for heavier
+   models.
 
 ---
 
@@ -208,15 +266,28 @@ trade-master/
 ├── AGENTS.md                            · session notes for AI sessions
 ├── Makefile                             · dev / up / down / logs / migrate
 ├── docker-compose.yml                   · 8-service compose stack
-├── migrations/                          · golang-migrate SQL pairs (0001..0011)
+├── migrations/                          · golang-migrate SQL pairs (0001..0022)
 ├── services/
-│   ├── gateway/                         · Go: Deriv WSS, NATS fan-out, order router, QuestDB ILP
+│   ├── gateway/                         · Go: Deriv WSS, NATS fan-out, order router, QuestDB ILP, balance polling
 │   ├── api/                             · FastAPI: auth, agents, decision loop, risk, postmortems, calendar, attribution, safety
+│   │                                      + Manager agent loop (reviews, 1:1 meetings, follow-ups, notifications)
+│   │                                      + forecast calibration (PAV isotonic + Platt scaling)
+│   │                                      + web_search tool (Tavily / DuckDuckGo, per-company gated)
+│   │                                      + Gemini Live ephemeral tokens for browser voice
 │   └── models/
 │       ├── ttm/                         · Granite TTM forecasting service
-│       └── kronos/                      · Kronos-small forecasting service
+│       └── kronos/                      · Kronos-base/-small forecasting service
 └── apps/
     └── web/                             · Next.js 15 app (sidebar + topbar shell)
+        ├── /                            · live dashboard with goal-progress strip + agents rail
+        ├── /agents                      · agent CRUD + voice picker + per-agent goals
+        ├── /agents/[id]                 · profile + activity feed + calibration card + manager history
+        ├── /meetings                    · all reviews + 1:1s with inline transcripts
+        ├── /meetings/[id]               · meeting detail + voice call manager + follow-up reply
+        ├── /manager                     · manager activity audit feed
+        ├── /backtests                   · model backtest runs, apply recommendations
+        ├── /postmortems · /history · /attribution · /edge · /payroll
+        └── /settings                    · daily profit target, web-search config
 ```
 
 ---

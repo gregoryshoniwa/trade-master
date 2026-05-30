@@ -38,6 +38,7 @@ MANAGER_ADJUSTABLE_FIELDS = {
     "max_trades_per_day":       (int,   1,   2000),
     "target_holding_secs":      (int,   30,  86400),
     "allocated_balance_usd":    (float, 0.0, 100000.0),
+    "daily_profit_target_usd":  (float, 0.0, 100000.0),
 }
 
 
@@ -624,19 +625,26 @@ async def _adjust_employee(args: dict, ctx: ToolContext) -> dict[str, Any]:
         return {"error": f"{field} must be in [{lo}, {hi}], got {new_value}"}
 
     async with acquire() as conn:
-        old_value = await conn.fetchval(
-            f"SELECT {field} FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+        # Pull existence + current value in one query — using fetchval
+        # on a nullable column (e.g. daily_profit_target_usd starting at
+        # NULL) couldn't distinguish "agent missing" from "value is null".
+        row = await conn.fetchrow(
+            f"SELECT id, {field} AS v FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
             emp_id, ctx.company_id,
         )
-        if old_value is None:
+        if row is None:
             return {"error": "employee not found on this company"}
-        # Cast for jsonb logging — numeric/float doesn't serialise straight
-        # to JSON via asyncpg's Decimal type.
-        before = float(old_value) if isinstance(old_value, (int, float)) else old_value
-        try:
-            before = py_type(before)
-        except (TypeError, ValueError):
-            pass
+        old_value = row["v"]
+        if old_value is None:
+            before: Any = None
+        else:
+            # Cast for jsonb logging — numeric doesn't serialise straight
+            # to JSON via asyncpg's Decimal type.
+            before = float(old_value) if isinstance(old_value, (int, float)) else old_value
+            try:
+                before = py_type(before)
+            except (TypeError, ValueError):
+                pass
         await conn.execute(
             f"UPDATE agents SET {field} = $1, updated_at = now() WHERE id = $2",
             new_value, emp_id,

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
+import GoalProgress from "@/components/GoalProgress";
 import KillSwitch from "@/components/KillSwitch";
 import SafetyBadges from "@/components/SafetyBadges";
 import TickChart from "@/components/TickChart";
@@ -219,6 +220,9 @@ export default function DashboardPage() {
           )}
         </div>
       </header>
+
+      {/* Goal progress strip — hidden when no target set. */}
+      {active && <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} />}
 
       {/* Stat cards */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

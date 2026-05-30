@@ -113,6 +113,7 @@ export type Agent = {
   min_payoff_ratio: number;
   max_trades_per_day: number;
   target_holding_secs: number | null;
+  daily_profit_target_usd: number | null;
   event_aware: boolean;
   aggression_index: number;
   detected_personality: string | null;
@@ -152,6 +153,7 @@ export type AgentUpdate = Partial<AgentCreate> & {
   min_payoff_ratio?: number;
   max_trades_per_day?: number;
   target_holding_secs?: number | null;
+  daily_profit_target_usd?: number | null;
   event_aware?: boolean;
 };
 
