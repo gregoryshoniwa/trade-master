@@ -228,8 +228,14 @@ class WebSearchOutcome:
 
 async def search(
     *, company_id: UUID, agent_id: UUID, query: str, max_results: int = 5,
+    backend_hint: str | None = None,
 ) -> WebSearchOutcome:
-    """Run a search subject to per-company config and quota."""
+    """Run a search subject to per-company config and quota.
+
+    `backend_hint` lets a single tool call override the company-level
+    backend preference for THIS call only. Useful when the LLM knows
+    a query is financial/news (force `tavily`) vs general (`duckduckgo`
+    is fine and saves a Tavily credit)."""
     query = (query or "").strip()
     if not query:
         return WebSearchOutcome(False, [], "empty query")
@@ -237,6 +243,17 @@ async def search(
 
     async with acquire() as conn:
         cfg = await _load_config(conn, company_id)
+        # Per-call override wins over the persisted company setting.
+        # We re-pack the config struct so the rest of the function
+        # doesn't need to know about the hint.
+        if backend_hint in ("auto", "tavily", "duckduckgo"):
+            cfg = CompanyWebSearchConfig(
+                enabled=cfg.enabled,
+                allowed_domains=cfg.allowed_domains,
+                blocked_domains=cfg.blocked_domains,
+                daily_quota=cfg.daily_quota,
+                backend=backend_hint,
+            )
         if not cfg.enabled:
             await _audit(conn, company_id, agent_id, query, 0, False, "web search disabled for this company")
             return WebSearchOutcome(False, [], "web search is disabled for this company; ask the CEO to enable it")

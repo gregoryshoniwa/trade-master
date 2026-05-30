@@ -39,6 +39,11 @@ MANAGER_ADJUSTABLE_FIELDS = {
     "target_holding_secs":      (int,   30,  86400),
     "allocated_balance_usd":    (float, 0.0, 100000.0),
     "daily_profit_target_usd":  (float, 0.0, 100000.0),
+    # Per-agent forecast cadence — useful when an agent's `forecasting_model`
+    # is a paid hosted ensemble (tsfm-ensemble) and the CEO wants a tighter
+    # budget. Default 60s = one signal per minute; bump to 300s to cut
+    # spend 5×.
+    "forecast_min_interval_secs": (int, 5, 86400),
 }
 
 
@@ -177,6 +182,186 @@ def available_tools() -> list[ToolDef]:
                 "required": ["employee_agent_id", "reason"],
             },
         ),
+        # ── Catalog tools (read-only; everyone can call) ───────────────
+        ToolDef(
+            name="get_available_strategies",
+            description=(
+                "Return the catalog of strategy modules available to assign "
+                "to employees. Each one is a deterministic indicator-based "
+                "filter (EMA, ATR, RSI, ADX, Bollinger Bands) that the "
+                "decision loop runs against live OHLC. Use this when you're "
+                "considering changing an employee's strategies list — read "
+                "the catalog first so you pick something that exists."
+            ),
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolDef(
+            name="get_available_forecasting_models",
+            description=(
+                "Return the catalog of forecasting models the platform "
+                "exposes (e.g. TTM, Kronos). Each agent picks exactly one "
+                "as their `forecasting_model`. Read this before calling "
+                "`set_employee_forecasting_model`."
+            ),
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolDef(
+            name="get_available_assets",
+            description=(
+                "Return the catalog of Deriv symbols the company is "
+                "permitted to trade (per its asset tier). Use this when "
+                "narrowing or widening an employee's allowed_assets."
+            ),
+            parameters={"type": "object", "properties": {}},
+        ),
+
+        # ── Strategy / config-change tools (manager only) ──────────────
+        ToolDef(
+            name="set_employee_strategies",
+            description=(
+                "MANAGER ONLY. Replace an employee's strategies list with "
+                "the given set. Strategy names must be drawn from "
+                "`get_available_strategies`. An employee with no strategies "
+                "never trades — pass an empty list to effectively benching "
+                "them. Use this to evolve a 'winning strategy' for an "
+                "employee: e.g., narrow Trendy to just trend_following + "
+                "breakout if mean_reversion is the loser. Always include "
+                "`reason` so the audit trail explains the change."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "strategies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of strategy keys from the catalog.",
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "strategies", "reason"],
+            },
+        ),
+        ToolDef(
+            name="set_employee_trade_mode",
+            description=(
+                "MANAGER ONLY. Switch an employee between approval modes. "
+                "`autonomous` = trades fire without operator sign-off. "
+                "`approve_each` = every intent waits for operator. "
+                "`approve_above_threshold` = small intents auto-approve, "
+                "large ones go to the queue. Use this to tighten oversight "
+                "on a losing employee (move to approve_each) or relax it "
+                "once they're stable (back to autonomous)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "trade_mode": {
+                        "type": "string",
+                        "enum": ["autonomous", "approve_each", "approve_above_threshold"],
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "trade_mode", "reason"],
+            },
+        ),
+        ToolDef(
+            name="set_employee_allowed_assets",
+            description=(
+                "MANAGER ONLY. Replace an employee's allowed_assets list. "
+                "Pass the full set of Deriv symbol codes the employee may "
+                "trade. Empty list = 'all symbols permitted by the company "
+                "tier'. Codes must come from `get_available_assets`. "
+                "Useful for removing an asset where the employee has been "
+                "losing (the calibration ECE per asset is the right input "
+                "for this decision)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "assets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Deriv symbol codes (e.g. frxEURUSD, cryBTCUSD).",
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "assets", "reason"],
+            },
+        ),
+        ToolDef(
+            name="set_employee_forecasting_model",
+            description=(
+                "MANAGER ONLY. Swap which forecaster drives an employee. "
+                "Model key must come from `get_available_forecasting_models`. "
+                "Use this when calibration shows a model is systematically "
+                "underperforming for an asset class, or when a new model "
+                "becomes available."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "model_key": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "model_key", "reason"],
+            },
+        ),
+        ToolDef(
+            name="add_strategy_combination",
+            description=(
+                "MANAGER ONLY. Add a specific strategy/asset/contract "
+                "combination to an employee's `allowed_combinations` list "
+                "— this is how you build a custom winning playbook. When "
+                "the employee's `trade_selection_mode` is `specific`, only "
+                "intents matching one of these combinations are accepted. "
+                "Build the list incrementally: research a thesis (consider "
+                "calling `web_search` for grounding news), define the "
+                "combination, watch it run, iterate. Combinations are "
+                "deduplicated server-side."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "strategy": {
+                        "type": "string",
+                        "description": "Strategy key from get_available_strategies (or leave blank to match any).",
+                    },
+                    "asset": {
+                        "type": "string",
+                        "description": "Deriv symbol (or blank to match any asset).",
+                    },
+                    "contract_type": {
+                        "type": "string",
+                        "description": "Contract type (MULTUP / MULTDOWN / CALL / PUT) or blank to match any.",
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "reason"],
+            },
+        ),
+        ToolDef(
+            name="clear_strategy_combinations",
+            description=(
+                "MANAGER ONLY. Empty an employee's `allowed_combinations` "
+                "list. Pair with `set_employee_trade_mode` to either "
+                "`balanced` or `safest` if you want the employee to keep "
+                "trading without the per-combination filter."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "employee_agent_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["employee_agent_id", "reason"],
+            },
+        ),
+
         ToolDef(
             name="hold_meeting_with_employee",
             description=(
@@ -317,6 +502,17 @@ def available_tools() -> list[ToolDef]:
                         "maximum": 10,
                         "description": "How many results to return (default 5).",
                     },
+                    "backend_hint": {
+                        "type": "string",
+                        "enum": ["auto", "tavily", "duckduckgo"],
+                        "description": (
+                            "Per-call backend override. 'tavily' = cleaner "
+                            "AI-tuned snippets, best for news / financial / "
+                            "macro queries. 'duckduckgo' = free fallback, fine "
+                            "for general or open-web queries. Defaults to the "
+                            "company-level setting at /settings."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -339,6 +535,9 @@ class ToolContext:
 MANAGER_TOOLS = {
     "get_team_status", "adjust_employee", "pause_employee", "resume_employee",
     "hold_meeting_with_employee", "set_company_daily_profit_target",
+    "set_employee_strategies", "set_employee_trade_mode",
+    "set_employee_allowed_assets", "set_employee_forecasting_model",
+    "add_strategy_combination", "clear_strategy_combinations",
 }
 EMPLOYEE_TOOLS = {"request_meeting_with_manager"}
 
@@ -412,6 +611,24 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
                 payload = await _get_upcoming_economic_events(args, ctx)
             case "request_meeting_with_manager":
                 payload = await _request_meeting_with_manager(args, ctx)
+            case "get_available_strategies":
+                payload = await _get_available_strategies()
+            case "get_available_forecasting_models":
+                payload = await _get_available_forecasting_models()
+            case "get_available_assets":
+                payload = await _get_available_assets(ctx)
+            case "set_employee_strategies":
+                payload = await _set_employee_strategies(args, ctx)
+            case "set_employee_trade_mode":
+                payload = await _set_employee_trade_mode(args, ctx)
+            case "set_employee_allowed_assets":
+                payload = await _set_employee_allowed_assets(args, ctx)
+            case "set_employee_forecasting_model":
+                payload = await _set_employee_forecasting_model(args, ctx)
+            case "add_strategy_combination":
+                payload = await _add_strategy_combination(args, ctx)
+            case "clear_strategy_combinations":
+                payload = await _clear_strategy_combinations(args, ctx)
             case _:
                 payload = {"error": f"unknown tool: {name}"}
     except Exception as e:
@@ -888,6 +1105,309 @@ async def _request_meeting_with_manager(args: dict, ctx: ToolContext) -> dict[st
     }
 
 
+# Strategy descriptions for the catalog tool. Keys must match the
+# `_REGISTRY` in app.strategies — when adding a new module, register it
+# both here and there.
+_STRATEGY_DESC: dict[str, str] = {
+    "trend_following": "EMA-9 above EMA-21 with ADX > 25 → momentum trade with the trend.",
+    "breakout": "Close beyond Bollinger Band (20, 2σ) on rising ATR → breakout entry.",
+    "support_resistance": "Bounce off the nearest swing high/low within 2× ATR → S/R play.",
+    "mean_reversion": "Price > 2σ from EMA-20 with RSI extreme → fade toward the mean.",
+    "price_action": "Engulfing or pin-bar candle pattern with confirming context.",
+}
+
+
+async def _get_available_strategies() -> dict[str, Any]:
+    from app.strategies import _REGISTRY as STRATEGY_REGISTRY
+    return {
+        "strategies": [
+            {"key": k, "description": _STRATEGY_DESC.get(k, "(no description)")}
+            for k in STRATEGY_REGISTRY.keys()
+        ],
+        "note": (
+            "Use these keys as the elements of the `strategies` list when "
+            "calling `set_employee_strategies`."
+        ),
+    }
+
+
+async def _get_available_forecasting_models() -> dict[str, Any]:
+    from app.forecasting import CATALOG as FORECAST_CATALOG
+    return {
+        "models": [
+            {
+                "key": m.key, "label": m.label, "family": m.family,
+                "granularity": m.granularity, "description": m.description,
+                "tier": m.tier,
+            }
+            for m in FORECAST_CATALOG
+        ],
+    }
+
+
+async def _get_available_assets(ctx: ToolContext) -> dict[str, Any]:
+    """Returns symbols filtered by the company's current asset tier."""
+    from app.symbols import CATALOG as SYMBOL_CATALOG
+    async with acquire() as conn:
+        tier = await conn.fetchval(
+            "SELECT current_asset_tier FROM companies WHERE id = $1",
+            ctx.company_id,
+        )
+    tier = int(tier or 1)
+    out = [
+        {
+            "code": s["code"], "display": s["display"],
+            "asset_class": s["asset_class"], "tier": s["tier"],
+            "description": s.get("description"),
+        }
+        for s in SYMBOL_CATALOG if int(s["tier"]) <= tier
+    ]
+    return {"company_tier": tier, "assets": out}
+
+
+async def _set_employee_strategies(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    from app.strategies import _REGISTRY as STRATEGY_REGISTRY
+
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    raw = args.get("strategies") or []
+    if not reason:
+        return {"error": "reason is required"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    if not isinstance(raw, list):
+        return {"error": "strategies must be an array of strings"}
+    cleaned: list[str] = []
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for s in raw:
+        if not isinstance(s, str):
+            continue
+        k = s.strip()
+        if k in seen:
+            continue
+        seen.add(k)
+        if k not in STRATEGY_REGISTRY:
+            unknown.append(k)
+        else:
+            cleaned.append(k)
+    if unknown:
+        return {
+            "error": f"unknown strategy keys: {unknown}. Call get_available_strategies for the catalog.",
+        }
+    async with acquire() as conn:
+        prev = await conn.fetchval(
+            "SELECT strategies FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev is None:
+            return {"error": "employee not found on this company"}
+        await conn.execute(
+            "UPDATE agents SET strategies = $1, updated_at = now() WHERE id = $2",
+            cleaned, emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust", field_name="strategies",
+        before_value=list(prev or []), after_value=cleaned, reason=reason,
+    )
+    return {"ok": True, "before": list(prev or []), "after": cleaned}
+
+
+async def _set_employee_trade_mode(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    mode = (args.get("trade_mode") or "").strip()
+    if not reason:
+        return {"error": "reason is required"}
+    if mode not in ("autonomous", "approve_each", "approve_above_threshold"):
+        return {"error": "trade_mode must be one of: autonomous, approve_each, approve_above_threshold"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    async with acquire() as conn:
+        prev = await conn.fetchval(
+            "SELECT trade_mode FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev is None:
+            return {"error": "employee not found on this company"}
+        await conn.execute(
+            "UPDATE agents SET trade_mode = $1, updated_at = now() WHERE id = $2",
+            mode, emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust", field_name="trade_mode",
+        before_value=prev, after_value=mode, reason=reason,
+    )
+    return {"ok": True, "before": prev, "after": mode}
+
+
+async def _set_employee_allowed_assets(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    from app.symbols import CATALOG as SYMBOL_CATALOG
+    valid = {s["code"] for s in SYMBOL_CATALOG}
+
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    raw = args.get("assets") or []
+    if not reason:
+        return {"error": "reason is required"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    if not isinstance(raw, list):
+        return {"error": "assets must be an array of strings"}
+    cleaned: list[str] = []
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for a in raw:
+        if not isinstance(a, str):
+            continue
+        k = a.strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        if k not in valid:
+            unknown.append(k)
+        else:
+            cleaned.append(k)
+    if unknown:
+        return {"error": f"unknown asset codes: {unknown}. Call get_available_assets for the catalog."}
+    async with acquire() as conn:
+        prev = await conn.fetchval(
+            "SELECT allowed_assets FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev is None:
+            return {"error": "employee not found on this company"}
+        await conn.execute(
+            "UPDATE agents SET allowed_assets = $1, updated_at = now() WHERE id = $2",
+            cleaned, emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust", field_name="allowed_assets",
+        before_value=list(prev or []), after_value=cleaned, reason=reason,
+    )
+    return {"ok": True, "before": list(prev or []), "after": cleaned}
+
+
+async def _set_employee_forecasting_model(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    from app.forecasting import is_known as is_known_forecast
+
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    model_key = (args.get("model_key") or "").strip()
+    if not reason:
+        return {"error": "reason is required"}
+    if not is_known_forecast(model_key):
+        return {"error": f"unknown forecasting model {model_key!r}. Call get_available_forecasting_models for the catalog."}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    async with acquire() as conn:
+        prev = await conn.fetchval(
+            "SELECT forecasting_model FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev is None:
+            return {"error": "employee not found on this company"}
+        await conn.execute(
+            "UPDATE agents SET forecasting_model = $1, updated_at = now() WHERE id = $2",
+            model_key, emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust", field_name="forecasting_model",
+        before_value=prev, after_value=model_key, reason=reason,
+    )
+    return {"ok": True, "before": prev, "after": model_key}
+
+
+async def _add_strategy_combination(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    """Append one entry to allowed_combinations, deduping by triplet.
+
+    The selection-mode evaluator interprets blank fields in a combo as
+    "match any", so a `(strategy="trend_following", asset="", contract="")`
+    combo accepts any trend_following trade on any asset/contract. The
+    manager builds the playbook by adding entries one at a time."""
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    strategy = (args.get("strategy") or "").strip()
+    asset = (args.get("asset") or "").strip()
+    contract = (args.get("contract_type") or "").strip()
+    if not reason:
+        return {"error": "reason is required"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    if not (strategy or asset or contract):
+        return {"error": "at least one of strategy / asset / contract_type must be set"}
+    new_entry = {"strategy": strategy, "asset": asset, "contract": contract}
+    async with acquire() as conn:
+        prev_raw = await conn.fetchval(
+            "SELECT allowed_combinations FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev_raw is None:
+            return {"error": "employee not found on this company"}
+        prev = prev_raw if isinstance(prev_raw, list) else (json.loads(prev_raw) if isinstance(prev_raw, str) else [])
+        # Dedup by triplet
+        triplet = (strategy, asset, contract)
+        if any((c.get("strategy", "") or "", c.get("asset", "") or "", c.get("contract", "") or "") == triplet
+               for c in prev):
+            return {"ok": True, "added": False, "reason": "combination already present"}
+        new_list = list(prev) + [new_entry]
+        await conn.execute(
+            "UPDATE agents SET allowed_combinations = $1::jsonb, updated_at = now() WHERE id = $2",
+            json.dumps(new_list), emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust",
+        field_name="allowed_combinations.add",
+        before_value=prev, after_value=new_list, reason=reason,
+    )
+    return {"ok": True, "added": True, "combination": new_entry, "total_now": len(new_list)}
+
+
+async def _clear_strategy_combinations(args: dict, ctx: ToolContext) -> dict[str, Any]:
+    reason = (args.get("reason") or "").strip()
+    emp_id_str = args.get("employee_agent_id") or ""
+    if not reason:
+        return {"error": "reason is required"}
+    try:
+        emp_id = UUID(emp_id_str)
+    except ValueError:
+        return {"error": "employee_agent_id must be a valid UUID"}
+    async with acquire() as conn:
+        prev_raw = await conn.fetchval(
+            "SELECT allowed_combinations FROM agents WHERE id=$1 AND company_id=$2 AND role='employee'",
+            emp_id, ctx.company_id,
+        )
+        if prev_raw is None:
+            return {"error": "employee not found on this company"}
+        prev = prev_raw if isinstance(prev_raw, list) else (json.loads(prev_raw) if isinstance(prev_raw, str) else [])
+        await conn.execute(
+            "UPDATE agents SET allowed_combinations = '[]'::jsonb, updated_at = now() WHERE id = $1",
+            emp_id,
+        )
+    await _log_action(
+        company_id=ctx.company_id, manager_agent_id=ctx.agent_id,
+        employee_agent_id=emp_id, kind="adjust",
+        field_name="allowed_combinations.clear",
+        before_value=prev, after_value=[], reason=reason,
+    )
+    return {"ok": True, "cleared": len(prev)}
+
+
 async def _hold_meeting_with_employee(args: dict, ctx: ToolContext) -> dict[str, Any]:
     """Schedule a 1:1 meeting between the calling manager and a named
     employee. The meeting itself runs as a background task so it doesn't
@@ -947,9 +1467,12 @@ async def _web_search(args: dict, ctx: ToolContext) -> dict[str, Any]:
     if not query:
         return {"error": "query is required"}
     max_results = int(args.get("max_results") or 5)
+    hint = (args.get("backend_hint") or "").strip().lower() or None
+    if hint and hint not in ("auto", "tavily", "duckduckgo"):
+        return {"error": "backend_hint must be one of: auto, tavily, duckduckgo"}
     outcome = await _ws_search(
         company_id=ctx.company_id, agent_id=ctx.agent_id,
-        query=query, max_results=max_results,
+        query=query, max_results=max_results, backend_hint=hint,
     )
     if not outcome.ok:
         return {

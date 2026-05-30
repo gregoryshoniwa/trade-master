@@ -88,6 +88,7 @@ def _row_to_agent(r: asyncpg.Record) -> Agent:
             float(r["daily_profit_target_usd"])
             if r["daily_profit_target_usd"] is not None else None
         ),
+        forecast_min_interval_secs=int(r["forecast_min_interval_secs"]),
         event_aware=r["event_aware"],
         aggression_index=r["aggression_index"],
         detected_personality=r["detected_personality"],

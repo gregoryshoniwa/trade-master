@@ -41,6 +41,7 @@ export default function AgentDetailPage() {
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [dailyTarget, setDailyTarget] = useState<string>("");
+  const [cadence, setCadence] = useState<string>("60");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function AgentDetailPage() {
         setDailyTarget(
           a.daily_profit_target_usd != null ? String(a.daily_profit_target_usd) : "",
         );
+        setCadence(String(a.forecast_min_interval_secs));
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "load failed"));
   }, [activeCompanyId, params.id]);
@@ -81,6 +83,7 @@ export default function AgentDetailPage() {
     try {
       const tgtTrimmed = dailyTarget.trim();
       const tgt = tgtTrimmed === "" ? 0 : Math.max(0, Math.min(100000, Number(tgtTrimmed) || 0));
+      const cad = Math.max(5, Math.min(86400, Number(cadence) || 60));
       const updated = await api.updateAgent(activeCompanyId, agent.id, {
         name,
         personality,
@@ -94,6 +97,7 @@ export default function AgentDetailPage() {
         voice_id: voiceId,
         voice_enabled: voiceEnabled,
         daily_profit_target_usd: tgt,
+        forecast_min_interval_secs: cad,
       });
       setAgent(updated);
       setDirty(false);
@@ -381,6 +385,23 @@ export default function AgentDetailPage() {
                 </span>
               </Field>
             )}
+            {agent.role !== "manager" && (
+              <Field label="Forecast cadence (secs)">
+                <input
+                  type="number"
+                  min={5}
+                  max={86400}
+                  step="5"
+                  value={cadence}
+                  onChange={(e) => markDirty(setCadence)(e.target.value)}
+                  className="num w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-sm outline-none focus:border-bull"
+                />
+                <span className="mt-1 block text-[10px] text-text-mute">
+                  Minimum gap between signals this agent will evaluate. Bump to 300s when on{" "}
+                  <span className="num">tsfm-ensemble</span> to cut paid API cost 5×.
+                </span>
+              </Field>
+            )}
             <Readonly
               label="Current allocation"
               value={FMT_USD.format(agent.allocated_balance_usd)}
@@ -404,6 +425,36 @@ export default function AgentDetailPage() {
                 </span>
               ))}
             </div>
+          </Section>
+        )}
+
+        {agent.role !== "manager" && agent.allowed_combinations.length > 0 && (
+          <Section title={`Playbook · ${agent.allowed_combinations.length} combination${agent.allowed_combinations.length === 1 ? "" : "s"}`}>
+            <p className="mb-3 text-xs text-text-mute">
+              Specific (strategy × asset × contract) entries the manager
+              has approved. Active only when <span className="num text-text">trade_selection_mode</span> is{" "}
+              <span className="num text-text">specific</span> — otherwise these are advisory.
+            </p>
+            <ul className="space-y-1">
+              {agent.allowed_combinations.map((c, i) => (
+                <li
+                  key={i}
+                  className="flex flex-wrap items-center gap-2 rounded-md bg-bg-elev-1 px-3 py-1.5 text-xs"
+                >
+                  <span className={c.strategy ? "text-text" : "text-text-mute italic"}>
+                    {c.strategy ? (STRATEGY_LABEL[c.strategy] ?? c.strategy) : "any strategy"}
+                  </span>
+                  <span className="text-text-mute">·</span>
+                  <span className={c.asset ? "num text-text" : "text-text-mute italic"}>
+                    {c.asset || "any asset"}
+                  </span>
+                  <span className="text-text-mute">·</span>
+                  <span className={c.contract ? "num text-text" : "text-text-mute italic"}>
+                    {c.contract || "any contract"}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </Section>
         )}
 

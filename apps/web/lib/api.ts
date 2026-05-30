@@ -114,6 +114,7 @@ export type Agent = {
   max_trades_per_day: number;
   target_holding_secs: number | null;
   daily_profit_target_usd: number | null;
+  forecast_min_interval_secs: number;
   event_aware: boolean;
   aggression_index: number;
   detected_personality: string | null;
@@ -154,6 +155,7 @@ export type AgentUpdate = Partial<AgentCreate> & {
   max_trades_per_day?: number;
   target_holding_secs?: number | null;
   daily_profit_target_usd?: number | null;
+  forecast_min_interval_secs?: number;
   event_aware?: boolean;
 };
 

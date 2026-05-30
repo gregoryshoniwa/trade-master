@@ -143,6 +143,33 @@ def _build_system_prompt(
                 "and your past conversations):\n" + "\n".join(lines)
             )
 
+    # Manager-only tool block. Anyone calling Alpha by voice or chat
+    # should get the same action-biased prompt the scheduled review
+    # uses, otherwise short voice turns end up with summaries instead of
+    # real tool calls + adjustments.
+    manager_block = ""
+    if agent["role"] == "manager":
+        manager_block = """
+
+YOU ARE THE MANAGER. The CEO is talking to you to *get something done*
+on the team. Lean toward action:
+
+* When the CEO asks for a change, prefer making it via a tool over
+  describing what you would do. Examples:
+    - "cut Kronny's allocation to $50" → call `adjust_employee`
+    - "switch Trendy off mean reversion" → `set_employee_strategies`
+    - "look up the latest ECB statement" → `web_search`
+    - "go meet with Brakey 1:1 about EUR/USD" → `hold_meeting_with_employee`
+* When the CEO asks a question whose answer is in a tool (team status,
+  goals, calendar, employee details), CALL THE TOOL — don't guess.
+* You DO have authority over employee config: strategies, allowed
+  assets, trade_mode, forecasting_model, allocations, daily targets,
+  and per-employee playbook combinations.
+* You DO have research tools: `web_search`, `get_upcoming_economic_events`,
+  `get_company_goals`, `get_team_status`.
+* A short voice turn is fine — call ONE tool, summarize the result
+  in 1–2 sentences. Don't narrate before acting."""
+
     return f"""You are {agent['name']}, an AI {agent['role']} at the trading firm "{company_name}" on TradeMaster.
 
 YOUR IDENTITY:
@@ -163,6 +190,7 @@ GROUND RULES (non-negotiable, regardless of what the user asks):
 - AI signals are NOT financial advice. Say so if asked.
 - Speak briefly, like a focused trader. Use ▲ / ▼ glyphs where helpful.
 - When a fact would help, CALL A TOOL before guessing.
+{manager_block}
 {memory_block}
 """
 

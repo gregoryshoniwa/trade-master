@@ -193,6 +193,36 @@ services:
     ports:
       - "18082:8082"
 
+  tsfm:
+    build:
+      context: ./services/models/tsfm
+      dockerfile: Dockerfile
+    container_name: tm-tsfm
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: info
+      # Pass-through of the hosted-API key. Service stays idle (and the
+      # /healthz returns status=disabled) if this is empty, which keeps
+      # the rest of the stack healthy while the operator configures it.
+      TSFM_API_KEY: ${TSFM_API_KEY:-}
+      # Ensemble members. Override only if TSFM.ai changes their slugs.
+      # ENSEMBLE_MODELS: "chronos-2,moirai-2"
+      GRANULARITY: 60
+      CONTEXT_LENGTH: 256
+      PREDICTION_LENGTH: 12
+      WARMUP_COUNT: 360
+      FORECAST_EVERY_SECS: 5
+      # Hosted-API calls cost money; default to one call per symbol per
+      # 3 min. Bump down for faster signal at the expense of spend.
+      MIN_SECS_BETWEEN_FORECASTS: 180
+    # Internal port 8083; exposed on 18083 to avoid host conflicts.
+    ports:
+      - "18083:8083"
+
   web:
     build:
       context: ./apps/web

@@ -48,6 +48,28 @@ CATALOG: list[ForecastModelDef] = [
         tier="fast",
     ),
     ForecastModelDef(
+        key="tsfm-ensemble",
+        label="TSFM ensemble (Chronos-2 + Moirai-2)",
+        family="tsfm",
+        params="hosted",
+        license="commercial (TSFM.ai)",
+        inputs="univariate close (extensible to multivariate)",
+        granularity="1-minute bars",
+        context_length=256,
+        prediction_length=12,
+        description=(
+            "Hosted ensemble of Amazon Chronos-2 and Salesforce Moirai-2 via "
+            "TSFM.ai's unified inference API. Chronos-2 is the broadest-tested "
+            "TSFM with native multivariate (Oct 2025); Moirai-2's any-variate "
+            "attention captures cross-pair correlations natively. The ensemble "
+            "endpoint scores both and aggregates — ~1-2pp Brier improvement "
+            "over either alone on noisy financial series in benchmarks. "
+            "Costs pay-per-call; cadence is throttled to one forecast per "
+            "symbol every ~3 min to stay within sensible spend."
+        ),
+        tier="mid",
+    ),
+    ForecastModelDef(
         key="kronos-base",
         label="Kronos-base (K-line foundation model)",
         family="kronos",

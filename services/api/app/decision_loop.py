@@ -75,6 +75,10 @@ class DecisionLoop:
         self._nc: nats.NATS | None = None
         self._sub: Any | None = None
         self._stop = asyncio.Event()
+        # Per-agent monotonic clock of the last signal we let through.
+        # Keyed by agent UUID. Trimmed implicitly — agents removed or
+        # deactivated just leave stale entries; few enough to ignore.
+        self._last_signal_at: dict[UUID, float] = {}
 
     async def start(self) -> None:
         # Use the shared api NATS connection (bus). It's connected by the
@@ -142,6 +146,7 @@ class DecisionLoop:
                        a.forecasting_model, a.trade_selection_mode,
                        a.allowed_combinations,
                        a.daily_profit_target_usd,
+                       a.forecast_min_interval_secs,
                        c.current_asset_tier, c.unlocked_contract_types,
                        c.daily_profit_target_usd AS company_daily_profit_target_usd,
                        -- Today's realized P&L for the company. The subquery
@@ -175,7 +180,18 @@ class DecisionLoop:
                 confidence, model,
             )
 
+        import time as _time
+        now_mono = _time.monotonic()
         for r in rows:
+            # Per-agent cadence throttle: skip if this agent saw a
+            # signal less than their declared interval ago. Applied
+            # BEFORE the heavier strategy/risk path so we don't burn
+            # OHLC fetches on signals we're going to drop anyway.
+            interval = int(r["forecast_min_interval_secs"] or 60)
+            last_at = self._last_signal_at.get(r["id"])
+            if last_at is not None and (now_mono - last_at) < interval:
+                continue
+            self._last_signal_at[r["id"]] = now_mono
             try:
                 await self._maybe_intent(
                     r, fc, direction, confidence, raw_confidence, last_price, asset,
