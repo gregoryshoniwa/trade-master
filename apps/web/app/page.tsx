@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
+import DailySummary from "@/components/DailySummary";
 import GoalProgress from "@/components/GoalProgress";
 import KillSwitch from "@/components/KillSwitch";
 import SafetyBadges from "@/components/SafetyBadges";
@@ -223,6 +224,9 @@ export default function DashboardPage() {
 
       {/* Goal progress strip — hidden when no target set. */}
       {active && <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} />}
+
+      {/* Daily summary — hidden when there's nothing to show. */}
+      {active && <DailySummary companyId={active.id} />}
 
       {/* Stat cards */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

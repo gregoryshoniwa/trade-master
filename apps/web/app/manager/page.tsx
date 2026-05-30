@@ -12,7 +12,7 @@ const FMT_DT = new Intl.DateTimeFormat("en-US", {
 
 const PAGE_SIZE = 25;
 
-type Kind = "review" | "adjust" | "pause" | "resume";
+type Kind = "review" | "adjust" | "pause" | "resume" | "meeting";
 
 function formatVal(v: unknown): string {
   if (v === null || v === undefined) return "—";
@@ -25,6 +25,7 @@ function kindClass(k: Kind): string {
   if (k === "adjust") return "bg-accent/15 text-accent";
   if (k === "pause") return "bg-bear/15 text-bear";
   if (k === "resume") return "bg-bull/15 text-bull";
+  if (k === "meeting") return "bg-accent/15 text-accent";
   return "bg-bg-elev-2 text-text-mute";
 }
 

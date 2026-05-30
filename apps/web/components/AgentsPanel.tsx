@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api, ApiError, type TradeIntent } from "@/lib/api";
 import { friendlySymbol } from "@/lib/symbols";
@@ -51,6 +51,20 @@ export default function AgentsPanel({
   companyId, onIntentClosed,
 }: Props) {
   const buckets = useMemo(() => groupByAgent(intents, livePrices), [intents, livePrices]);
+  // Per-agent daily target — fetched lazily so the panel still renders
+  // instantly. The map is keyed by agentId; missing entries just mean
+  // "no target" and the goal strip won't render for that agent.
+  const [targets, setTargets] = useState<Record<string, number | null>>({});
+  useEffect(() => {
+    let cancelled = false;
+    api.listAgents(companyId).then((r) => {
+      if (cancelled) return;
+      const map: Record<string, number | null> = {};
+      for (const a of r.agents) map[a.id] = a.daily_profit_target_usd;
+      setTargets(map);
+    }).catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, [companyId]);
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // Expand by default the agent with open positions; collapse the rest.
     const s = new Set<string>();
@@ -110,6 +124,7 @@ export default function AgentsPanel({
           <AgentCard
             key={b.agentId}
             bucket={b}
+            target={targets[b.agentId] ?? null}
             livePrices={livePrices}
             open={expanded.has(b.agentId)}
             onToggle={() => toggle(b.agentId)}
@@ -126,10 +141,11 @@ export default function AgentsPanel({
 }
 
 function AgentCard({
-  bucket, livePrices, open, onToggle, selectedIntentId, onPickIntent,
+  bucket, target, livePrices, open, onToggle, selectedIntentId, onPickIntent,
   onClosePosition, closing, closeError,
 }: {
   bucket: AgentBucket;
+  target: number | null;
   livePrices: LivePrices;
   open: boolean;
   onToggle: () => void;
@@ -167,6 +183,10 @@ function AgentCard({
         </span>
       </button>
 
+      {target != null && target > 0 && (
+        <GoalStrip pnl={bucket.pnlToday} target={target} />
+      )}
+
       {open && (
         <div className="border-t border-border px-2 pb-2 pt-1">
           {bucket.open.length === 0 ? (
@@ -198,6 +218,45 @@ function AgentCard({
         </div>
       )}
     </article>
+  );
+}
+
+function GoalStrip({ pnl, target }: { pnl: number; target: number }) {
+  // Mirrors the dashboard's band logic so the strip color matches what
+  // the decision-loop throttle is actually doing right now.
+  const raw = pnl / target;
+  const band =
+    raw >= 1.0 ? "hit"
+    : raw >= 0.8 ? "halve"
+    : raw >= 0.5 ? "trim"
+    : raw < 0 ? "red"
+    : "normal";
+  const barCls = {
+    hit:    "bg-bull",
+    halve:  "bg-amber-400",
+    trim:   "bg-accent",
+    normal: "bg-accent/60",
+    red:    "bg-bear",
+  }[band];
+  const tone = {
+    hit: "text-bull", halve: "text-amber-400", trim: "text-accent",
+    normal: "text-text-mute", red: "text-bear",
+  }[band];
+  return (
+    <div className="border-t border-border px-3 py-1.5">
+      <div className="mb-1 flex items-baseline justify-between text-[10px] text-text-mute">
+        <span>Goal</span>
+        <span className={`num ${tone}`}>
+          {pnl >= 0 ? "+" : ""}{FMT_USD.format(pnl)} / {FMT_USD.format(target)}
+        </span>
+      </div>
+      <div className="h-1 w-full overflow-hidden rounded-full bg-bg-elev-2">
+        <div
+          className={`h-full transition-all ${barCls}`}
+          style={{ width: `${Math.min(100, Math.max(0, raw * 100))}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

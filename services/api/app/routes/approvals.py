@@ -230,6 +230,152 @@ async def list_intents(
     return TradeIntentList(intents=[_row(r) for r in rows])
 
 
+class ProposeTradeIn(BaseModel):
+    agent_id: UUID
+    asset: str
+    direction: Literal["up", "down"]
+    stake_usd: float = Field(gt=0, le=10000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/approvals", response_model=TradeIntent)
+async def propose_trade(
+    company_id: UUID, body: ProposeTradeIn, account_id: CurrentAccount,
+):
+    """Operator-initiated trade proposal — bypasses the strategy/forecast
+    pipeline but still goes through the same Risk Agent and lands as a
+    `pending_approval` row that the operator approves explicitly. Useful
+    for testing the flow without waiting on signals, and for manual
+    intervention when the operator has a view the agents missed."""
+    from datetime import datetime, timezone
+    from app.contracts import pick_for_direction
+    from app.decision_loop import (
+        DEFAULT_STOP_PCT, DEFAULT_MULTIPLIER, SYMBOL_MULTIPLIER,
+    )
+    from app.ohlc import get_candles
+    from app.risk import evaluate as risk_evaluate
+
+    async with acquire() as conn:
+        role = await _ensure_member(conn, company_id, account_id)
+        if role not in WRITE_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient role")
+        agent = await conn.fetchrow(
+            """
+            SELECT a.id, a.name, a.company_id, a.allowed_contract_types,
+                   a.min_payoff_ratio, a.target_holding_secs,
+                   c.current_asset_tier, c.unlocked_contract_types
+            FROM agents a
+            JOIN companies c ON c.id = a.company_id
+            WHERE a.id = $1 AND a.company_id = $2
+            """,
+            body.agent_id, company_id,
+        )
+        if agent is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found on this company")
+
+    # Snap current price from QuestDB — the proposal needs a real entry
+    # for the risk agent's stop-loss + multiplier math.
+    candles = await get_candles(body.asset, granularity_sec=60, count=2)
+    if not candles:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"no recent ticks for {body.asset} — chart subscription required",
+        )
+    last_price = float(candles[-1]["close"])
+
+    plugin = pick_for_direction(
+        direction=body.direction,
+        company_tier=int(agent["current_asset_tier"] or 1),
+        company_unlocked=list(agent["unlocked_contract_types"] or []),
+        agent_allowed=list(agent["allowed_contract_types"] or []),
+    )
+    if plugin is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"no contract type available for {body.direction} on this agent/tier",
+        )
+
+    payoff = float(agent["min_payoff_ratio"])
+    params = plugin.build(
+        direction=body.direction,
+        proposed_stake_usd=body.stake_usd,
+        last_price=last_price,
+        stop_pct=DEFAULT_STOP_PCT,
+        payoff_ratio=payoff,
+        asset=body.asset,
+        multiplier_default=SYMBOL_MULTIPLIER.get(body.asset, DEFAULT_MULTIPLIER),
+        target_holding_secs=int(agent["target_holding_secs"] or 600),
+    )
+    stop = params.stop_loss if params.stop_loss is not None else last_price
+
+    async with acquire() as conn:
+        async with conn.transaction():
+            verdict = await risk_evaluate(
+                conn,
+                company_id=company_id, agent_id=body.agent_id,
+                asset=body.asset, contract_type=params.contract_type,
+                proposed_stake_usd=body.stake_usd, confidence=0.5,
+                stop_loss=stop,
+            )
+            applied_stake = verdict.applied_stake_usd or body.stake_usd
+            status_str = "rejected_by_risk" if not verdict.ok else "pending_approval"
+            rationale = (
+                f"Operator proposal by user {account_id}: {body.reason}"
+            )
+            entry_context = {
+                "agent": {"name": agent["name"]},
+                "forecast": None,
+                "sizing": {"method": "operator_manual", "proposed_stake_usd": body.stake_usd},
+                "selection_mode": {"mode": "operator", "accepted": True, "reason": body.reason},
+                "strategy": None,
+            }
+            asof_ts = datetime.now(tz=timezone.utc)
+            expires_at = await conn.fetchval(
+                "SELECT now() + interval '60 seconds'",
+            )
+            intent_id = await conn.fetchval(
+                """
+                INSERT INTO trade_intents (
+                    company_id, agent_id,
+                    asset, contract_type, direction,
+                    stake_usd, multiplier, duration_secs,
+                    entry_price, stop_loss, take_profit,
+                    source_model, source_asof_ts, confidence,
+                    expected_payoff_ratio, expected_value_usd, rationale,
+                    status, risk_verdict, expires_at, entry_context
+                )
+                VALUES ($1, $2, $3, $4, $5,
+                        $6, $7, $8,
+                        $9, $10, $11,
+                        $12, $13, $14,
+                        $15, $16, $17,
+                        $18, $19::jsonb, $20, $21::jsonb)
+                RETURNING id
+                """,
+                company_id, body.agent_id,
+                body.asset, params.contract_type, body.direction,
+                applied_stake, params.multiplier or 0,
+                params.duration_secs or int(agent["target_holding_secs"] or 600),
+                last_price, stop,
+                params.take_profit if params.take_profit is not None else last_price,
+                "operator", asof_ts, 0.5,
+                payoff, applied_stake * (payoff - 1) * 0.5 - applied_stake * 0.5,
+                rationale,
+                status_str, json.dumps(verdict.as_jsonb()), expires_at,
+                json.dumps(entry_context),
+            )
+            full = await conn.fetchrow(
+                """
+                SELECT i.*, a.name AS agent_name
+                FROM trade_intents i
+                JOIN agents a ON a.id = i.agent_id
+                WHERE i.id = $1
+                """,
+                intent_id,
+            )
+    return _row(full)
+
+
 @router.post("/approvals/{intent_id}/approve", response_model=TradeIntent)
 async def approve_intent(
     company_id: UUID, intent_id: UUID,

@@ -476,31 +476,45 @@ export default function TickChart({
     const cBear = cssVar("--color-bear") || "#EF5350";
     const cAccent = cssVar("--color-accent") || "#2962FF";
 
+    // Only draw markers for trades whose timestamp falls within the
+    // chart's actually-rendered data range. Without this guard,
+    // executed_at values from earlier today get clamped to the left
+    // edge of the (much shorter) live tick window and pile on top of
+    // each other — the symptom the user saw in line mode where the
+    // markers showed up but the agents panel disagreed.
+    const firstTickTime = priceHistoryRef.current[0]?.time as UTCTimestamp | undefined;
+    const inRange = (epoch: number): boolean =>
+      firstTickTime === undefined || epoch >= (firstTickTime as number);
+
     const markers: SeriesMarker<UTCTimestamp>[] = [];
     for (const i of intents) {
       const isHi = i.id === highlightedIntentId;
       if (i.executed_at) {
-        const t = (new Date(i.executed_at).getTime() / 1000) as UTCTimestamp;
-        const up = i.direction === "up";
-        markers.push({
-          time: t,
-          position: up ? "belowBar" : "aboveBar",
-          color: isHi ? cAccent : up ? cBull : cBear,
-          shape: up ? "arrowUp" : "arrowDown",
-          text: `${i.agent_name} $${i.stake_usd.toFixed(0)}`,
-          size: isHi ? 2 : 1,
-        });
+        const epoch = Math.floor(new Date(i.executed_at).getTime() / 1000);
+        if (inRange(epoch)) {
+          const up = i.direction === "up";
+          markers.push({
+            time: epoch as UTCTimestamp,
+            position: up ? "belowBar" : "aboveBar",
+            color: isHi ? cAccent : up ? cBull : cBear,
+            shape: up ? "arrowUp" : "arrowDown",
+            text: `${i.agent_name} $${i.stake_usd.toFixed(0)}`,
+            size: isHi ? 2 : 1,
+          });
+        }
       }
       if (i.closed_at && i.realized_pnl_usd != null) {
-        const t = (new Date(i.closed_at).getTime() / 1000) as UTCTimestamp;
-        const win = i.realized_pnl_usd >= 0;
-        markers.push({
-          time: t,
-          position: "inBar",
-          color: win ? cBull : cBear,
-          shape: win ? "circle" : "square",
-          text: `${win ? "+" : ""}${i.realized_pnl_usd.toFixed(2)}`,
-        });
+        const epoch = Math.floor(new Date(i.closed_at).getTime() / 1000);
+        if (inRange(epoch)) {
+          const win = i.realized_pnl_usd >= 0;
+          markers.push({
+            time: epoch as UTCTimestamp,
+            position: "inBar",
+            color: win ? cBull : cBear,
+            shape: win ? "circle" : "square",
+            text: `${win ? "+" : ""}${i.realized_pnl_usd.toFixed(2)}`,
+          });
+        }
       }
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));

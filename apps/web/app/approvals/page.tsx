@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { api, ApiError, type TradeIntent } from "@/lib/api";
+import SymbolIcon from "@/components/SymbolIcon";
+import { api, ApiError, type Agent, type SymbolDef, type TradeIntent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { friendlySymbol } from "@/lib/symbols";
 
 const FMT_USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -24,6 +26,7 @@ export default function ApprovalsPage() {
 
   const [pending, setPending] = useState<TradeIntent[]>([]);
   const [recent, setRecent] = useState<TradeIntent[]>([]);
+  const [recentFilter, setRecentFilter] = useState<"all" | "executed" | "rejected" | "pending">("all");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -56,6 +59,17 @@ export default function ApprovalsPage() {
     };
   }, [refresh]);
 
+  // Filter the recent list by status bucket. We keep the network
+  // payload as-is (limit=20 / all statuses) so toggling between filters
+  // is instant; the backend doesn't need a second query.
+  const filteredRecent = recent.filter((i) => {
+    if (recentFilter === "all") return true;
+    if (recentFilter === "executed") return i.status === "executed";
+    if (recentFilter === "rejected") return i.status === "rejected_by_risk" || i.status === "rejected_by_user" || i.status === "expired" || i.status === "failed_execution";
+    if (recentFilter === "pending") return i.status === "pending_risk" || i.status === "pending_approval" || i.status === "approved" || i.status === "auto_approved";
+    return true;
+  });
+
   if (authLoading) return <main className="px-6 py-8 text-sm text-text-mute">Loading…</main>;
   if (!me) {
     return (
@@ -76,10 +90,13 @@ export default function ApprovalsPage() {
           <h1 className="text-lg font-semibold tracking-tight">{active.name} — Approvals</h1>
           <p className="text-xs text-text-mute">{pending.length} pending · {recent.length} in recent history</p>
         </div>
-        <button type="button" onClick={refresh}
-          className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:border-bull/40 hover:text-text">
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <ProposeTradeButton companyId={active.id} onProposed={refresh} />
+          <button type="button" onClick={refresh}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:border-bull/40 hover:text-text">
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </header>
 
       {error && <div className="mb-4 rounded-md border border-bear/40 bg-bear-soft p-3 text-sm text-bear">{error}</div>}
@@ -88,7 +105,18 @@ export default function ApprovalsPage() {
         <h2 className="mb-3 text-xs uppercase tracking-widest text-text-mute">Pending — needs your sign-off</h2>
         {pending.length === 0 ? (
           <div className="rounded-2xl border border-border bg-bg-card p-6 text-center text-sm text-text-mute">
-            Nothing waiting. Active employee agents will surface proposals here when their confidence floor + tier checks pass.
+            Nothing waiting.
+            <div className="mt-2 text-xs">
+              Proposals land here when an agent is set to{" "}
+              <span className="num text-text">approve_each</span> or{" "}
+              <span className="num text-text">approve_above_threshold</span>{" "}
+              and the intent passes risk + confidence checks. Agents in{" "}
+              <span className="num text-text">autonomous</span> mode skip approvals.
+              {" "}
+              <Link href="/agents" className="text-accent hover:underline">
+                Manage agent modes →
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -98,8 +126,25 @@ export default function ApprovalsPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-xs uppercase tracking-widest text-text-mute">Recent</h2>
-        {recent.length === 0 ? (
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-xs uppercase tracking-widest text-text-mute">Recent</h2>
+          <div className="flex gap-1 rounded-md border border-border bg-bg-elev-1 p-1 text-[10px]">
+            {([
+              { v: "all", label: "All" },
+              { v: "executed", label: "Executed" },
+              { v: "rejected", label: "Rejected" },
+              { v: "pending", label: "Pending" },
+            ] as const).map((o) => (
+              <button
+                key={o.v} type="button" onClick={() => setRecentFilter(o.v)}
+                className={`rounded px-2 py-1 ${recentFilter === o.v ? "bg-accent text-white" : "text-text-mute hover:text-text"}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {filteredRecent.length === 0 ? (
           <div className="rounded-2xl border border-border bg-bg-card p-6 text-center text-sm text-text-mute">No agent decisions yet.</div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-border bg-bg-card">
@@ -108,33 +153,12 @@ export default function ApprovalsPage() {
                 <tr>
                   <Th>When</Th><Th>Agent</Th><Th>Asset</Th><Th>Side</Th>
                   <Th className="text-right">Stake</Th><Th className="text-right">Conf</Th>
-                  <Th>Status</Th><Th className="text-right">P&amp;L</Th>
+                  <Th>Status</Th><Th className="text-right">P&amp;L</Th><Th></Th>
                 </tr>
               </thead>
               <tbody>
-                {recent.map((i) => (
-                  <tr key={i.id} className="border-b border-border last:border-0">
-                    <Td className="num text-xs text-text-mute">
-                      {new Date(i.created_at).toLocaleTimeString("en-GB", { hour12: false })}
-                    </Td>
-                    <Td>{i.agent_name}</Td>
-                    <Td className="num">{i.asset}</Td>
-                    <Td><DirGlyph dir={i.direction} /><span className="num ml-1 text-text-dim">{i.contract_type}</span></Td>
-                    <Td className="num text-right">{FMT_USD.format(i.stake_usd)}</Td>
-                    <Td className="num text-right text-text-dim">{(i.confidence * 100).toFixed(0)}%</Td>
-                    <Td><StatusPill status={i.status} /></Td>
-                    <Td className="num text-right">
-                      {i.realized_pnl_usd != null ? (
-                        <span className={i.realized_pnl_usd >= 0 ? "text-bull" : "text-bear"}>
-                          {i.realized_pnl_usd >= 0 ? "▲" : "▼"} {FMT_USD.format(Math.abs(i.realized_pnl_usd))}
-                        </span>
-                      ) : i.status === "executed" ? (
-                        <span className="text-text-mute">open</span>
-                      ) : (
-                        <span className="text-text-mute">—</span>
-                      )}
-                    </Td>
-                  </tr>
+                {filteredRecent.map((i) => (
+                  <RecentRow key={i.id} intent={i} />
                 ))}
               </tbody>
             </table>
@@ -229,8 +253,111 @@ function PendingCard({ intent, companyId, nowMs, onChanged }: {
   );
 }
 
-function RiskBreakdown({ verdict }: { verdict: TradeIntent["risk_verdict"] }) {
+function RecentRow({ intent }: { intent: TradeIntent }) {
   const [open, setOpen] = useState(false);
+  const i = intent;
+  const failedCheck = i.risk_verdict
+    ? i.risk_verdict.checks.find((c) => !c.passed) ?? null
+    : null;
+  // Single-line decision summary for the collapsed row — answers
+  // "why did this end up here?" without forcing a click.
+  const decision: { who: string; why: string | null } | null = (() => {
+    if (i.status === "rejected_by_risk") {
+      return {
+        who: "Risk Agent",
+        why: i.risk_verdict?.reason
+          ?? (failedCheck ? `${failedCheck.name}${failedCheck.detail ? ` — ${failedCheck.detail}` : ""}` : null),
+      };
+    }
+    if (i.status === "rejected_by_user") {
+      return { who: "Operator", why: i.user_decision_reason ?? "rejected manually" };
+    }
+    if (i.status === "expired") {
+      return { who: "Auto-expired", why: "approval window passed without sign-off" };
+    }
+    if (i.status === "failed_execution") {
+      return { who: "Broker", why: "buy failed — see expanded details" };
+    }
+    if (i.status === "approved" || i.status === "auto_approved" || i.status === "executed") {
+      const auto = i.status === "auto_approved" || i.user_decision_by == null;
+      return { who: auto ? "Auto-approved" : "Operator", why: i.user_decision_reason ?? null };
+    }
+    return null;
+  })();
+  return (
+    <>
+      <tr className="cursor-pointer border-b border-border last:border-0 hover:bg-bg-elev-2"
+        onClick={() => setOpen((v) => !v)}>
+        <Td className="num text-xs text-text-mute">
+          {new Date(i.created_at).toLocaleTimeString("en-GB", { hour12: false })}
+        </Td>
+        <Td>{i.agent_name}</Td>
+        <Td>
+          <span className="inline-flex items-center gap-1.5">
+            <SymbolIcon code={i.asset} size={14} />
+            <span className="num text-xs">{friendlySymbol(i.asset)}</span>
+          </span>
+        </Td>
+        <Td><DirGlyph dir={i.direction} /><span className="num ml-1 text-text-dim">{i.contract_type}</span></Td>
+        <Td className="num text-right">{FMT_USD.format(i.stake_usd)}</Td>
+        <Td className="num text-right text-text-dim">{(i.confidence * 100).toFixed(0)}%</Td>
+        <Td><StatusPill status={i.status} /></Td>
+        <Td className="num text-right">
+          {i.realized_pnl_usd != null ? (
+            <span className={i.realized_pnl_usd >= 0 ? "text-bull" : "text-bear"}>
+              {i.realized_pnl_usd >= 0 ? "▲" : "▼"} {FMT_USD.format(Math.abs(i.realized_pnl_usd))}
+            </span>
+          ) : i.status === "executed" ? (
+            <span className="text-text-mute">open</span>
+          ) : (
+            <span className="text-text-mute">—</span>
+          )}
+        </Td>
+        <Td className="text-right text-[10px] text-text-mute">{open ? "▾" : "▸"}</Td>
+      </tr>
+      {open && (
+        <tr className="border-b border-border last:border-0 bg-bg-elev-1">
+          <td colSpan={9} className="px-4 py-3">
+            <div className="space-y-3 text-xs">
+              {decision && (
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-text-mute">Decided by</span>
+                  <span className="font-medium">{decision.who}</span>
+                  {decision.why && <span className="text-text-dim">— {decision.why}</span>}
+                </div>
+              )}
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-text-mute">
+                <span>via <span className="num text-text">{i.source_model}</span></span>
+                {i.expected_payoff_ratio != null && (
+                  <span>payoff <span className="num text-text">{i.expected_payoff_ratio.toFixed(2)}×</span></span>
+                )}
+                {i.expected_value_usd != null && (
+                  <span>EV <span className="num text-text">{FMT_USD.format(i.expected_value_usd)}</span></span>
+                )}
+                {i.executed_at && (
+                  <span>filled <span className="num text-text">{new Date(i.executed_at).toLocaleTimeString("en-GB", { hour12: false })}</span></span>
+                )}
+                {i.closed_at && (
+                  <span>closed <span className="num text-text">{new Date(i.closed_at).toLocaleTimeString("en-GB", { hour12: false })}</span></span>
+                )}
+                {i.exit_reason && <span>· {i.exit_reason}</span>}
+              </div>
+              {i.rationale && (
+                <p className="text-text-dim">
+                  <span className="text-text-mute">Why proposed:</span> {i.rationale}
+                </p>
+              )}
+              {i.risk_verdict && <RiskBreakdown verdict={i.risk_verdict} defaultOpen />}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function RiskBreakdown({ verdict, defaultOpen = false }: { verdict: TradeIntent["risk_verdict"]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   if (!verdict) return null;
   return (
     <div className="rounded-md bg-bg-elev-1 p-2 text-xs">
@@ -269,6 +396,147 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-text-mute">{label}</div>
       <div className="num mt-0.5 text-text">{value}</div>
     </div>
+  );
+}
+
+function ProposeTradeButton({
+  companyId, onProposed,
+}: { companyId: string; onProposed: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [symbols, setSymbols] = useState<SymbolDef[]>([]);
+  const [agentId, setAgentId] = useState("");
+  const [asset, setAsset] = useState("");
+  const [direction, setDirection] = useState<"up" | "down">("up");
+  const [stake, setStake] = useState("5");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    Promise.all([
+      api.listAgents(companyId).then((r) => r.agents),
+      api.listSymbols().then((r) => r.symbols),
+    ]).then(([as, ss]) => {
+      setAgents(as.filter((a) => a.is_active && a.role === "employee"));
+      setSymbols(ss);
+      if (as.length && !agentId) setAgentId(as[0].id);
+      if (ss.length && !asset) setAsset(ss[0].code);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, companyId]);
+
+  async function submit() {
+    setBusy(true); setError(null);
+    try {
+      await api.proposeTrade(companyId, {
+        agent_id: agentId,
+        asset,
+        direction,
+        stake_usd: Math.max(1, Math.min(10000, Number(stake) || 0)),
+        reason: reason.trim() || "manual operator proposal",
+      });
+      setOpen(false);
+      onProposed();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "propose failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-md border border-accent/40 px-3 py-1.5 text-xs text-accent hover:bg-accent/10"
+      >
+        + Propose trade
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-bg-card p-5 shadow-xl">
+            <header className="mb-4 flex items-baseline justify-between">
+              <h3 className="text-sm font-medium">Propose a trade</h3>
+              <button type="button" onClick={() => setOpen(false)}
+                className="text-text-mute hover:text-text">✕</button>
+            </header>
+            <div className="space-y-3 text-sm">
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-widest text-text-mute">Agent</span>
+                <select
+                  value={agentId} onChange={(e) => setAgentId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2"
+                >
+                  {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-widest text-text-mute">Asset</span>
+                <select
+                  value={asset} onChange={(e) => setAsset(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2"
+                >
+                  {symbols.map((s) => <option key={s.code} value={s.code}>{s.display} · {s.code}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] uppercase tracking-widest text-text-mute">Direction</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setDirection("up")}
+                      className={`flex-1 rounded-md border px-3 py-2 ${direction === "up" ? "border-bull bg-bull/10 text-bull" : "border-border"}`}>
+                      ▲ Up
+                    </button>
+                    <button type="button" onClick={() => setDirection("down")}
+                      className={`flex-1 rounded-md border px-3 py-2 ${direction === "down" ? "border-bear bg-bear/10 text-bear" : "border-border"}`}>
+                      ▼ Down
+                    </button>
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] uppercase tracking-widest text-text-mute">Stake (USD)</span>
+                  <input
+                    type="number" min={1} max={10000} step="0.5" value={stake}
+                    onChange={(e) => setStake(e.target.value)}
+                    className="w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2 num"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-widest text-text-mute">Reason</span>
+                <textarea
+                  value={reason} onChange={(e) => setReason(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. follow-up to a news event; manual test of the approval flow"
+                  className="w-full rounded-md border border-border bg-bg-elev-1 px-3 py-2"
+                />
+              </label>
+              {error && <div className="rounded border border-bear/40 bg-bear-soft p-2 text-xs text-bear">{error}</div>}
+              <p className="text-[10px] text-text-mute">
+                Lands as <span className="num">pending_approval</span> — risk
+                checks still run; you'll see it in Pending above and approve
+                or reject from there.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setOpen(false)}
+                  className="text-sm text-text-mute hover:text-text">Cancel</button>
+                <button type="button" onClick={submit}
+                  disabled={busy || !agentId || !asset}
+                  className="rounded-md bg-bull px-4 py-1.5 text-sm font-medium text-bg hover:opacity-90 disabled:opacity-40">
+                  {busy ? "Proposing…" : "Propose"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

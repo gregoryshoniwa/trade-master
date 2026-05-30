@@ -219,18 +219,18 @@ def available_tools() -> list[ToolDef]:
             description=(
                 "MANAGER ONLY. Update the Company's daily profit target "
                 "in USD. Use this when the CEO instructs you to change "
-                "the target during a chat or meeting. Pass null to clear "
-                "the target. Always include `reason` so the audit trail "
-                "explains the change."
+                "the target during a chat or meeting. Pass 0 to clear "
+                "the target (any value ≤ 0 means 'no target'). Always "
+                "include `reason` so the audit trail explains the change."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "daily_profit_target_usd": {
-                        "type": ["number", "null"],
+                        "type": "number",
                         "minimum": 0,
                         "maximum": 100000,
-                        "description": "New target in USD, or null to clear.",
+                        "description": "New target in USD, or 0 to clear.",
                     },
                     "reason": {"type": "string"},
                 },
@@ -747,7 +747,10 @@ async def _set_company_daily_profit_target(args: dict, ctx: ToolContext) -> dict
     raw = args.get("daily_profit_target_usd")
     if not reason:
         return {"error": "reason is required"}
-    # Allow null to clear, otherwise validate range.
+    # We allow either an explicit None or 0 to mean "clear the target".
+    # Gemini Live's tool-decl schema can't express union types, so we
+    # use the sentinel-zero convention there; the chat APIs that DO
+    # support null pass through fine via the same branch.
     target: float | None
     if raw is None:
         target = None
@@ -755,9 +758,11 @@ async def _set_company_daily_profit_target(args: dict, ctx: ToolContext) -> dict
         try:
             target = float(raw)
         except (TypeError, ValueError):
-            return {"error": "daily_profit_target_usd must be a number or null"}
+            return {"error": "daily_profit_target_usd must be a number"}
         if target < 0 or target > 100_000:
             return {"error": "daily_profit_target_usd must be between 0 and 100,000"}
+        if target == 0:
+            target = None  # 0 → clear
     async with acquire() as conn:
         prev = await conn.fetchval(
             "SELECT daily_profit_target_usd FROM companies WHERE id = $1",

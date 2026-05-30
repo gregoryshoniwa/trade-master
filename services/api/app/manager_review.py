@@ -290,7 +290,10 @@ async def _review_one_company(m) -> None:
     conversation_id = await _open_review_conversation(
         company_id=company_id, account_id=owner_id, agent_id=manager_id,
     )
-    await _append_message(conversation_id, company_id, "user", REVIEW_USER_PROMPT, None)
+    await _append_message(
+        conversation_id, company_id, "user",
+        REVIEW_USER_PROMPT_BASE + pending_block, None,
+    )
 
     final_text = ""
     round_no = 0

@@ -507,6 +507,18 @@ export const api = {
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
 
+  proposeTrade: (
+    companyId: string,
+    body: {
+      agent_id: string; asset: string;
+      direction: "up" | "down"; stake_usd: number; reason: string;
+    },
+  ) =>
+    request<TradeIntent>(
+      `/api/v1/companies/${companyId}/approvals`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
   closeIntent: (companyId: string, intentId: string) =>
     request<CloseResult>(
       `/api/v1/companies/${companyId}/intents/${intentId}/close`,
@@ -646,7 +658,7 @@ export const api = {
     companyId: string,
     opts?: {
       employeeId?: string;
-      actionKind?: "review" | "adjust" | "pause" | "resume";
+      actionKind?: "review" | "adjust" | "pause" | "resume" | "meeting";
       limit?: number;
       offset?: number;
     },
@@ -670,7 +682,7 @@ export type ManagerAction = {
   manager_name: string | null;
   employee_agent_id: string | null;
   employee_name: string | null;
-  action_kind: "review" | "adjust" | "pause" | "resume";
+  action_kind: "review" | "adjust" | "pause" | "resume" | "meeting";
   field_name: string | null;
   before_value: unknown;
   after_value: unknown;
