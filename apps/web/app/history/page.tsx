@@ -16,6 +16,7 @@ import { api, ApiError, type DerivStatementTransaction } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cssVar, useTheme } from "@/lib/theme";
 import { friendlySymbol } from "@/lib/symbols";
+import SymbolIcon from "@/components/SymbolIcon";
 
 const FMT_USD = new Intl.NumberFormat("en-US", {
   style: "currency", currency: "USD",
@@ -344,8 +345,13 @@ export default function HistoryPage() {
                     <td className="px-3 py-2 text-xs">
                       <span className={tone}>{label}</span>
                     </td>
-                    <td className="num px-3 py-2 text-xs text-text-dim">
-                      {t.symbol ? friendlySymbol(t.symbol) : "—"}
+                    <td className="px-3 py-2 text-xs text-text-dim">
+                      {t.symbol ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <SymbolIcon code={t.symbol} size={14} />
+                          <span className="num">{friendlySymbol(t.symbol)}</span>
+                        </span>
+                      ) : "—"}
                     </td>
                     <td className={`num whitespace-nowrap px-3 py-2 text-right text-xs ${
                       t.amount > 0 ? "text-bull" : t.amount < 0 ? "text-bear" : "text-text-mute"

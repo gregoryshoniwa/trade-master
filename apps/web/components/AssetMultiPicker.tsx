@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api, type SymbolDef } from "@/lib/api";
+import SymbolIcon from "@/components/SymbolIcon";
 
 const CLASS_LABEL: Record<SymbolDef["asset_class"], string> = {
   forex: "Forex",
@@ -117,15 +118,16 @@ export default function AssetMultiPicker({ value, onChange }: Props) {
                       key={s.code}
                       type="button"
                       onClick={() => toggle(s.code)}
-                      title={s.description}
-                      className={`flex items-center justify-between rounded px-2 py-1 text-left text-xs transition ${
+                      title={`${s.description} · ${s.code}`}
+                      className={`flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition ${
                         on
                           ? "bg-accent-soft text-accent"
                           : "text-text-dim hover:bg-bg-elev-2 hover:text-text"
                       }`}
                     >
-                      <span className="truncate">{s.display}</span>
-                      <span className="num ml-1 text-[10px] text-text-mute">T{s.tier}</span>
+                      <SymbolIcon code={s.code} size={14} />
+                      <span className="flex-1 truncate">{s.display}</span>
+                      <span className="num text-[10px] text-text-mute">T{s.tier}</span>
                     </button>
                   );
                 })}

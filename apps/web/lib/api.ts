@@ -709,6 +709,7 @@ export type MeetingKind = "review" | "meeting";
 export type MeetingSummary = {
   id: string;
   kind: MeetingKind;
+  manager_agent_id: string | null;
   manager_name: string | null;
   employee_name: string | null;
   employee_agent_id: string | null;

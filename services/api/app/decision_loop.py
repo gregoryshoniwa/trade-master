@@ -141,7 +141,17 @@ class DecisionLoop:
                        a.is_active, a.is_paused, a.target_holding_secs,
                        a.forecasting_model, a.trade_selection_mode,
                        a.allowed_combinations,
-                       c.current_asset_tier, c.unlocked_contract_types
+                       c.current_asset_tier, c.unlocked_contract_types,
+                       c.daily_profit_target_usd,
+                       -- Today's realized P&L for the company. The subquery
+                       -- reads from a partial index on (company_id, closed_at);
+                       -- at our trade volume it's microseconds. If this gets
+                       -- hot we'll cache in-process, but premature.
+                       (SELECT COALESCE(SUM(realized_pnl_usd), 0)
+                        FROM trade_intents
+                        WHERE company_id = c.id
+                          AND closed_at >= date_trunc('day', now())
+                       ) AS today_realized_pnl
                 FROM agents a
                 JOIN companies c ON c.id = a.company_id
                 WHERE a.role = 'employee'
@@ -201,6 +211,35 @@ class DecisionLoop:
         kelly = float(agent["kelly_fraction"])
         allocation = float(agent["allocated_balance_usd"])
         proposed = max(1.0, allocation * kelly * confidence)
+
+        # ── Goal-aware throttle (PLAN §10 follow-up) ───────────────────
+        # Read the CEO's daily profit target and today's realized P&L
+        # for the company. We use a stair-step throttle:
+        #   ≥ 100% of target → skip the trade entirely
+        #   ≥ 80%            → halve the stake
+        #   ≥ 50%            → 75% of original stake
+        # The point is to protect today's gains as we approach the goal,
+        # not to dial up risk after hitting it. When the target is unset
+        # this whole branch is a no-op and Kelly sizing runs as-is.
+        goal_note: str | None = None
+        target = agent["daily_profit_target_usd"]
+        if target is not None:
+            target = float(target)
+            today_pnl = float(agent["today_realized_pnl"] or 0)
+            if target > 0:
+                progress = today_pnl / target
+                if progress >= 1.0:
+                    log.info(
+                        "agent=%s skipped: company hit daily target ($%.2f / $%.2f)",
+                        agent["name"], today_pnl, target,
+                    )
+                    return
+                if progress >= 0.8:
+                    proposed = max(1.0, proposed * 0.5)
+                    goal_note = f"halved (P&L ${today_pnl:.2f} = {progress:.0%} of ${target:.0f} target)"
+                elif progress >= 0.5:
+                    proposed = max(1.0, proposed * 0.75)
+                    goal_note = f"75% (P&L ${today_pnl:.2f} = {progress:.0%} of ${target:.0f} target)"
 
         # Pick a contract plugin honouring the company's tier + agent's
         # allowed_contract_types. Returns None when neither MULTUP/DOWN
@@ -311,6 +350,10 @@ class DecisionLoop:
                 "method": "fractional_kelly_x_confidence",
                 "proposed_stake_usd": round(proposed, 4),
                 "multiplier": multiplier,
+                # When non-null, the CEO's daily profit target trimmed the
+                # stake. Useful in the postmortem: "we sized small here
+                # because we were already up 80% of target".
+                "goal_throttle": goal_note,
             },
             "selection_mode": {
                 "mode": mode,

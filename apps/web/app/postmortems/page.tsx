@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { friendlySymbol } from "@/lib/symbols";
+import SymbolIcon from "@/components/SymbolIcon";
 
 const FMT_USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -264,7 +265,10 @@ function PostmortemCard({ pm }: { pm: Postmortem }) {
           <span className={`text-base font-medium ${outcomeCls}`}>
             <DirGlyph dir={pm.direction} /> {pm.contract_type}
           </span>
-          <span className="num text-text-dim">{pm.asset}</span>
+          <span className="inline-flex items-center gap-1 text-text-dim">
+            {pm.asset && <SymbolIcon code={pm.asset} size={14} />}
+            <span className="num">{pm.asset ? friendlySymbol(pm.asset) : "—"}</span>
+          </span>
         </div>
         <div className="flex items-baseline gap-3">
           <span className={`num text-sm font-medium ${win ? "text-bull" : pm.pnl_usd < 0 ? "text-bear" : "text-text-dim"}`}>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type SymbolDef } from "@/lib/api";
 import { friendlySymbol } from "@/lib/symbols";
+import SymbolIcon from "@/components/SymbolIcon";
 
 type Props = {
   value: string;
@@ -68,10 +69,10 @@ export default function AssetPicker({ value, onChange }: Props) {
         onClick={() => setOpen((v) => !v)}
         className="flex max-w-[18rem] items-center gap-2 rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm hover:border-accent/40"
       >
+        <SymbolIcon code={value.split(",")[0]} size={18} />
         <span className="truncate font-medium" title={current?.display ?? value}>
           {current?.display ?? friendlySymbol(value)}
         </span>
-        <span className="num hidden text-text-mute sm:inline">· {value.split(",")[0]}</span>
         <span className="text-text-mute">▾</span>
       </button>
 
@@ -90,14 +91,12 @@ export default function AssetPicker({ value, onChange }: Props) {
                     onChange(s.code);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-bg-elev-2 ${
+                  className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-bg-elev-2 ${
                     s.code === value ? "bg-bg-elev-2" : ""
                   }`}
                 >
-                  <span>
-                    <span className="font-medium">{s.display}</span>
-                    <span className="num ml-2 text-xs text-text-mute">{s.code}</span>
-                  </span>
+                  <SymbolIcon code={s.code} size={18} />
+                  <span className="flex-1 truncate font-medium">{s.display}</span>
                   <span className="text-[10px] text-text-mute">T{s.tier}</span>
                 </button>
               ))}

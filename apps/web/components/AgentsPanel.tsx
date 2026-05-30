@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { api, ApiError, type TradeIntent } from "@/lib/api";
 import { friendlySymbol } from "@/lib/symbols";
+import SymbolIcon from "@/components/SymbolIcon";
 
 const FMT_USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -238,8 +239,9 @@ function PositionRow({
           className="block w-full rounded-md px-2 py-1.5 pr-16 text-left text-xs"
         >
           <div className="flex items-baseline justify-between gap-2">
-            <span className="flex min-w-0 items-baseline gap-1 truncate">
+            <span className="flex min-w-0 items-center gap-1 truncate">
               <span className={glyphTone}>{glyph}</span>
+              <SymbolIcon code={intent.asset} size={14} />
               <span className="truncate text-text" title={intent.asset}>{friendlySymbol(intent.asset)}</span>
               <span className="num text-[10px] text-text-mute">
                 {intent.contract_type}

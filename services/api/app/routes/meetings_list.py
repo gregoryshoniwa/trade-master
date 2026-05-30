@@ -29,6 +29,7 @@ router = APIRouter(prefix="/companies/{company_id}/meetings", tags=["meetings"])
 class MeetingSummary(BaseModel):
     id: UUID
     kind: Literal["review", "meeting"]
+    manager_agent_id: UUID | None
     manager_name: str | None
     employee_name: str | None
     employee_agent_id: UUID | None
@@ -97,7 +98,7 @@ async def list_meetings(
             f"""
             SELECT ma.id, ma.action_kind, ma.reason, ma.llm_narrative,
                    ma.conversation_id, ma.created_at,
-                   ma.employee_agent_id,
+                   ma.employee_agent_id, ma.manager_agent_id,
                    mgr.name AS manager_name,
                    emp.name AS employee_name
             FROM manager_actions ma
@@ -113,6 +114,7 @@ async def list_meetings(
         MeetingSummary(
             id=r["id"],
             kind=r["action_kind"],
+            manager_agent_id=r["manager_agent_id"],
             manager_name=r["manager_name"],
             employee_name=r["employee_name"],
             employee_agent_id=r["employee_agent_id"],
@@ -135,7 +137,7 @@ async def get_meeting(
             """
             SELECT ma.id, ma.action_kind, ma.reason, ma.llm_narrative,
                    ma.conversation_id, ma.created_at,
-                   ma.employee_agent_id,
+                   ma.employee_agent_id, ma.manager_agent_id,
                    mgr.name AS manager_name,
                    emp.name AS employee_name
             FROM manager_actions ma
@@ -173,6 +175,7 @@ async def get_meeting(
     return MeetingDetail(
         id=row["id"],
         kind=row["action_kind"],
+        manager_agent_id=row["manager_agent_id"],
         manager_name=row["manager_name"],
         employee_name=row["employee_name"],
         employee_agent_id=row["employee_agent_id"],
