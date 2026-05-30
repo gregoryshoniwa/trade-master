@@ -202,15 +202,18 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       NATS_URL: nats://nats:4222
+      # Backtest results are persisted directly into the api's postgres
+      # so a TSFM run survives an api rebuild (same pattern Kronos uses).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trademaster}:${POSTGRES_PASSWORD:-dev_change_me}@postgres:5432/${POSTGRES_DB:-trademaster}
       LOG_LEVEL: info
       # Pass-through of the hosted-API key. Service stays idle (and the
       # /healthz returns status=disabled) if this is empty, which keeps
       # the rest of the stack healthy while the operator configures it.
       TSFM_API_KEY: ${TSFM_API_KEY:-}
-      # Ensemble members. Override only if TSFM.ai changes their slugs.
-      # ENSEMBLE_MODELS: "chronos-2,moirai-2"
       GRANULARITY: 60
       CONTEXT_LENGTH: 256
       PREDICTION_LENGTH: 12
@@ -219,6 +222,10 @@ services:
       # Hosted-API calls cost money; default to one call per symbol per
       # 3 min. Bump down for faster signal at the expense of spend.
       MIN_SECS_BETWEEN_FORECASTS: 180
+      # Backtest concurrency — caps parallel TSFM.ai calls during a
+      # walk-forward sweep to avoid bursting cost or hitting upstream
+      # rate limits.
+      TSFM_BACKTEST_CONCURRENCY: 6
     # Internal port 8083; exposed on 18083 to avoid host conflicts.
     ports:
       - "18083:8083"

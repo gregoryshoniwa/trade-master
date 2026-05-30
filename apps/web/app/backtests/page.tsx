@@ -100,6 +100,7 @@ export default function BacktestsPage() {
   // statistical value too badly: stride=20 (skip 19/20 windows),
   // count=1500 (~one trading day of 1-min bars), horizon=12 (Kronos cap).
   const isKronos = selectedModel?.family === "kronos";
+  const isTsfm = selectedModel?.family === "tsfm";
   useEffect(() => {
     if (!selectedModel) return;
     setHorizon((h) => (h > horizonMax ? horizonMax : h));
@@ -114,7 +115,9 @@ export default function BacktestsPage() {
   // before pressing Run. The per-window time is empirical for CPU; tweak
   // if we ever support GPU or batched inference.
   const symbolsCount = symbolsCsv.split(",").map((s) => s.trim()).filter(Boolean).length;
-  const perWindowSecs = isKronos ? 60 : 0.15;
+  // TSFM is an HTTP round-trip per window with concurrency 6 in the
+  // tsfm container — warm calls land in ~5s, so amortized is ~5/6 ≈ 0.85s.
+  const perWindowSecs = isKronos ? 60 : isTsfm ? 0.85 : 0.15;
   const windowsPerSymbol = Math.max(0, Math.floor((barCount - (selectedModel?.context_length ?? 256)) / Math.max(1, stride)));
   const estimateSecs = Math.round(windowsPerSymbol * symbolsCount * perWindowSecs);
 
@@ -277,6 +280,17 @@ export default function BacktestsPage() {
                   {" · "}{windowsPerSymbol.toLocaleString()} windows × {symbolsCount} symbol{symbolsCount === 1 ? "" : "s"}.
                   Server timeout is 6h — over that and the run is killed.
                   Push the stride higher or the bar count lower to finish sooner.
+                </>
+              ) : isTsfm ? (
+                <>
+                  TSFM ensemble = 1 hosted-API call per window (concurrency 6,
+                  ~5s/call warm). Estimated wall-clock:{" "}
+                  <span className={`num ${estimateSecs > 60 * 60 ? "text-warning" : "text-text"}`}>
+                    {formatDuration(estimateSecs)}
+                  </span>
+                  {" · "}{windowsPerSymbol.toLocaleString()} windows × {symbolsCount} symbol{symbolsCount === 1 ? "" : "s"}.
+                  <span className="text-text-mute">{" "}Each window is a paid
+                  TSFM.ai call — push the stride higher to cut spend.</span>
                 </>
               ) : (
                 <>

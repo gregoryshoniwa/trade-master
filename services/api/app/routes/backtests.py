@@ -48,6 +48,7 @@ WRITE_ROLES = {"owner", "admin", "trader"}
 MODEL_ENDPOINTS: dict[str, str] = {
     "ttm-granite-r2": "http://ttm:8081/backtest",
     "kronos-base":    "http://kronos:8082/backtest",
+    "tsfm-ensemble":  "http://tsfm:8083/backtest",
 }
 # Generous deadline. Kronos on CPU is *very* slow (~60s per window with
 # sample_count=8). At the form's default density (stride=3, count=5000,
