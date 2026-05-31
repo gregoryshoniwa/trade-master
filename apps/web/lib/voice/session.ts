@@ -127,9 +127,15 @@ export class VoiceSession {
         model: session.model,
         requiresGeminiBrain: session.requires_gemini_brain,
       });
-      await this.openSocket(session.ws_url, session.model, session.voice_name);
-      this.setState("ready");
-      await this.startMic();
+      // Run socket setup and mic init concurrently — independent paths
+      // dominated by WS round-trip (~200-600ms) and AudioContext/worklet
+      // boot + getUserMedia (~200-800ms cold). Sequencing them used to
+      // double-cost cold start; parallel hides the smaller behind the
+      // larger.
+      await Promise.all([
+        this.openSocket(session.ws_url, session.model, session.voice_name),
+        this.startMic(),
+      ]);
       this.startedAtMs = performance.now();
       this.setState("live");
     } catch (e) {

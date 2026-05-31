@@ -152,7 +152,10 @@ export default function TickChart({
         barSpacing: 4,
       },
       width: containerRef.current.clientWidth,
-      height: 480,
+      // Fill the parent's available height when it has one (the fullscreen
+      // dashboard layout), fall back to 480 when the parent is unsized
+      // (e.g. backtest preview, modal mount).
+      height: containerRef.current.clientHeight || 480,
       crosshair: {
         vertLine: { color: c.accent, labelBackgroundColor: c.accent },
         horzLine: { color: c.accent, labelBackgroundColor: c.accent },
@@ -207,15 +210,27 @@ export default function TickChart({
     // on mode switch so markers follow the visible price.
     markersRef.current = createSeriesMarkers(lineSeries, []);
 
-    const onResize = () => {
+    // Width + height now track the container, not the viewport, so the
+    // chart resizes when the dashboard's flex layout reflows (open the
+    // agent dock, toggle the goal strip, drag a side panel, etc.).
+    const resizeChart = () => {
       if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+        chartRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight || 480,
+        });
       }
     };
-    window.addEventListener("resize", onResize);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      ro = new ResizeObserver(resizeChart);
+      ro.observe(containerRef.current);
+    }
+    window.addEventListener("resize", resizeChart);
 
     return () => {
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", resizeChart);
+      ro?.disconnect();
       chart.remove();
       chartRef.current = null;
       lineSeriesRef.current = null;
@@ -560,7 +575,7 @@ export default function TickChart({
   const deltaGlyph = delta == null ? "●" : delta >= 0 ? "▲" : "▼";
 
   return (
-    <div className="rounded-2xl border border-border bg-bg-card p-4 shadow-glow">
+    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-bg-card p-4 shadow-glow">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-widest text-text-mute">
@@ -598,9 +613,12 @@ export default function TickChart({
         </div>
       </div>
 
-      <div ref={containerRef} className="w-full" />
+      {/* flex-1 + min-h-0 lets the canvas eat whatever vertical space the
+          parent (dashboard) gives it; ResizeObserver above keeps the
+          chart instance in sync. */}
+      <div ref={containerRef} className="min-h-0 w-full flex-1" />
 
-      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mt-3 grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Bid" value={latest?.bid != null ? fmt.format(latest.bid) : "—"} />
         <Stat label="Ask" value={latest?.ask != null ? fmt.format(latest.ask) : "—"} />
         <Stat label="Epoch" value={

@@ -215,30 +215,39 @@ async def mint_voice_session(
             requires_gemini_brain=True, agent_brain_label="",
         )
 
+    # One pool acquire for everything we need to build the system prompt.
+    # The old code did 3 sequential acquires (member check, agent load,
+    # company name, user details) — they were dominating the cold start.
     async with acquire() as conn:
         await _ensure_member(conn, company_id, account_id)
         agent = await _load_agent(conn, company_id, agent_id)
+        company_row = await conn.fetchrow(
+            "SELECT name FROM companies WHERE id = $1", company_id,
+        )
+        user_row = await conn.fetchrow(
+            """
+            SELECT a.full_name, m.title
+            FROM accounts a
+            LEFT JOIN company_members m
+                ON m.account_id = a.id AND m.company_id = $2
+            WHERE a.id = $1
+            """,
+            account_id, company_id,
+        )
 
     model, requires_swap = pick_model(dict(agent))
     voice = voices.get(agent["voice_id"])
 
-    # Pull a few memories so the system prompt feels continuous across
-    # sessions. Empty query gets the most-relevant; future iteration could
-    # update live.
-    memories = []
-    try:
-        memories = await memory_service.search(
-            company_id=company_id, account_id=account_id,
-            agent_id=agent_id, query="", limit=5,
-        )
-    except Exception:
-        log.debug("mem0 recall failed; continuing without")
-
-    company_row = await _get_company_name(company_id)
-    user_row = await _get_user(account_id, company_id)
+    # mem0 used to sit on the critical path here (400ms-2s warm, 1-3s
+    # cold from `Memory.from_config` init) — it was the single biggest
+    # source of voice startup latency. The system prompt is still
+    # personalized via company + user; memories injected on first user
+    # turn instead, when latency is hidden behind the user speaking.
+    company_name = (company_row["name"] if company_row else "this company")
+    full_name = user_row["full_name"] if user_row else None
+    title = user_row["title"] if user_row else None
     system_prompt = _build_system_prompt(
-        agent, company_row["name"], user_row.get("full_name"),
-        user_row.get("title"), memories,
+        agent, company_name, full_name, title, memories=[],
     )
 
     cfg = _build_live_config(

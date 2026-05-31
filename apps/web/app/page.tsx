@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import AgentDock from "@/components/AgentDock";
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
 import DailySummary from "@/components/DailySummary";
@@ -196,73 +197,86 @@ export default function DashboardPage() {
     return <Landing />;
   }
 
+  // Fullscreen 3-region layout (top strip / main / dock).
+  // Shell gives us a scrollable <main>; we cap our own height to its
+  // viewport so the dashboard never overflows, the chart stretches to
+  // fill, and the dock is reachable without scrolling. min-h-0 on the
+  // middle row is necessary so flex children honor the parent height
+  // (the canonical CSS-grid-inside-flex trick).
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-      {/* Header strip */}
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">
-            {active ? `${active.name} — Dashboard` : "Dashboard"}
-          </h1>
-          {active && (
-            <p className="text-xs text-text-mute">
-              Tier {active.current_asset_tier} ·{" "}
-              {active.unlocked_contract_types.join(", ")} ·{" "}
-              <span className="text-bull">paper mode</span>
-            </p>
-          )}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Top strip — header + stat row in one compact band. */}
+      <div className="shrink-0 border-b border-border bg-bg-elev-1/40 px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold tracking-tight">
+              {active ? `${active.name} — Dashboard` : "Dashboard"}
+            </h1>
+            {active && (
+              <p className="truncate text-[11px] text-text-mute">
+                Tier {active.current_asset_tier} ·{" "}
+                {active.unlocked_contract_types.join(", ")} ·{" "}
+                <span className="text-bull">paper mode</span>
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {active && <SafetyBadges companyId={active.id} />}
+            {active && <KillSwitch companyId={active.id} />}
+            <AssetPicker value={symbol} onChange={chooseSymbol} />
+            {!loading && me && companies.length === 0 && (
+              <Link
+                href="/companies/new"
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-strong"
+              >
+                + Create your first company
+              </Link>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {active && <SafetyBadges companyId={active.id} />}
-          {active && <KillSwitch companyId={active.id} />}
-          <AssetPicker value={symbol} onChange={chooseSymbol} />
-          {!loading && me && companies.length === 0 && (
-            <Link
-              href="/companies/new"
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-strong"
-            >
-              + Create your first company
-            </Link>
-          )}
+
+        {/* Compact stat strip. Hidden on extra-small screens where the
+            data fits the chart's own header. */}
+        <div className="mt-3 hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
+          <CompactStat
+            label="Today's Realized"
+            value={FMT_USD.format(todayPnl)}
+            tone={todayPnl > 0 ? "bull" : todayPnl < 0 ? "bear" : "muted"}
+          />
+          <CompactStat
+            label="Unrealized (open)"
+            value={FMT_USD.format(unrealizedPnl)}
+            tone={unrealizedPnl > 0 ? "bull" : unrealizedPnl < 0 ? "bear" : "muted"}
+            sub={`${openPositions.length} positions`}
+          />
+          <CompactStat
+            label="Intents today"
+            value={String(todays.length)}
+            sub={`${todays.filter((i) => i.status === "executed").length} executed`}
+          />
+          <CompactStat
+            label="Symbol"
+            value={symbolMeta?.display ?? friendlySymbol(symbol)}
+            sub={symbolMeta?.asset_class ?? ""}
+          />
         </div>
-      </header>
-
-      {/* Goal progress strip — hidden when no target set. */}
-      {active && <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} />}
-
-      {/* Daily summary — hidden when there's nothing to show. */}
-      {active && <DailySummary companyId={active.id} />}
-
-      {/* Stat cards */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard
-          label="Today's Realized"
-          value={FMT_USD.format(todayPnl)}
-          tone={todayPnl > 0 ? "bull" : todayPnl < 0 ? "bear" : "muted"}
-        />
-        <StatCard
-          label="Unrealized (open)"
-          value={FMT_USD.format(unrealizedPnl)}
-          tone={unrealizedPnl > 0 ? "bull" : unrealizedPnl < 0 ? "bear" : "muted"}
-          sub={`${openPositions.length} positions`}
-        />
-        <StatCard
-          label="Intents today"
-          value={String(todays.length)}
-          tone="muted"
-          sub={`${todays.filter((i) => i.status === "executed").length} executed`}
-        />
-        <StatCard
-          label="Symbol"
-          value={symbolMeta?.display ?? friendlySymbol(symbol)}
-          tone="muted"
-          sub={symbolMeta?.asset_class ?? ""}
-        />
       </div>
 
-      {/* Main: chart + agents rail */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="min-w-0">
+      {/* Goal progress + daily summary — collapsible strips. Each
+          renders nothing when there's nothing to show, so on a cold
+          dashboard this whole band collapses to 0px. */}
+      {active && (
+        <div className="shrink-0 px-4 sm:px-6">
+          <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} />
+          <DailySummary companyId={active.id} />
+        </div>
+      )}
+
+      {/* Main: chart + agents rail. The chart auto-fills available
+          height (flex-1 + min-h-0), and the rail scrolls internally
+          when its content overflows. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-4 pb-3 pt-2 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex min-h-0 min-w-0 flex-col">
           <TickChart
             symbol={symbol}
             wsUrl={`${wsUrl}/ws/ticks`}
@@ -272,7 +286,7 @@ export default function DashboardPage() {
             highlightedIntentId={selectedIntentId}
           />
         </div>
-        <div className="flex flex-col gap-4">
+        <div className="flex min-h-0 flex-col overflow-hidden">
           {active && (
             <AgentsPanel
               intents={intents}
@@ -281,19 +295,25 @@ export default function DashboardPage() {
               onPickIntent={onPickIntent}
               companyId={active.id}
               onIntentClosed={() => {
-                // Pull fresh state now so the closed row disappears
-                // immediately instead of after the next 5s poll.
                 refreshIntents();
               }}
             />
           )}
         </div>
       </div>
+
+      {/* Bottom dock — talk-to-any-agent strip. ~56px so it never
+          steals real estate but is always one tap away. */}
+      {active && (
+        <div className="h-14 shrink-0 border-t border-border bg-bg-elev-1/60">
+          <AgentDock companyId={active.id} />
+        </div>
+      )}
     </div>
   );
 }
 
-function StatCard({
+function CompactStat({
   label, value, tone = "muted", sub,
 }: {
   label: string; value: string;
@@ -306,10 +326,11 @@ function StatCard({
     : tone === "accent" ? "text-accent"
     : "text-text";
   return (
-    <div className="min-w-0 rounded-2xl border border-border bg-bg-card p-4">
-      <div className="truncate text-xs uppercase tracking-widest text-text-mute">{label}</div>
-      <div className={`num mt-1 truncate text-2xl font-medium ${toneCls}`} title={value}>{value}</div>
-      {sub && <div className="truncate text-xs text-text-mute">{sub}</div>}
+    <div className="min-w-0 rounded-lg border border-border bg-bg-card px-3 py-2">
+      <div className="truncate text-[10px] uppercase tracking-widest text-text-mute">{label}</div>
+      <div className={`num truncate text-base font-medium ${toneCls}`} title={value}>{value}</div>
+      {sub && <div className="truncate text-[10px] text-text-mute">{sub}</div>}
     </div>
   );
 }
+
