@@ -516,267 +516,76 @@ export default function Landing() {
   );
 }
 
-/** Canvas-based dotted globe with depth shading, slow rotation, pulsing
- *  market hubs, and animated trade arcs between random hub pairs.
- *  Sized big so it can sit behind the hero headline as the main visual,
- *  not a corner illustration. */
+/** Photorealistic WebGL globe via cobe (the Vercel-built library that
+ *  powers most premium fintech "world map" hero visuals). Real
+ *  continents drawn as dots, with atmospheric glow, lighting, and a
+ *  slow auto-rotate. Hub markers pulse at the world's biggest market
+ *  cities. */
 function GlobeVisual({ size = 680 }: { size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // We keep phi in a ref so the cobe onRender callback can mutate it
+  // without React state churn.
+  const phiRef = useRef(0);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    let cancelled = false;
+    let globe: { destroy: () => void } | null = null;
 
-    // High-DPI: render at devicePixelRatio for crisp dots without
-    // bumping the CSS box.
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    canvas.style.width = `${size}px`;
-    canvas.style.height = `${size}px`;
-    ctx.scale(dpr, dpr);
-
-    const cx = size / 2;
-    const cy = size / 2;
-    const R = size * 0.42;
-
-    // Fibonacci lattice — distributes N points evenly on a sphere.
-    // Scale dot count with surface area for consistent density.
-    const N = Math.round((size / 380) ** 2 * 700);
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    const baseDots: { x: number; y: number; z: number }[] = [];
-    for (let i = 0; i < N; i++) {
-      const y = 1 - (i / (N - 1)) * 2;
-      const radius = Math.sqrt(1 - y * y);
-      const theta = golden * i;
-      baseDots.push({
-        x: Math.cos(theta) * radius,
-        y: y,
-        z: Math.sin(theta) * radius,
+    // cobe is browser-only (WebGL). Lazy-import so SSR doesn't crash.
+    import("cobe").then(({ default: createGlobe }) => {
+      if (cancelled || !canvasRef.current) return;
+      globe = createGlobe(canvasRef.current, {
+        devicePixelRatio: Math.min(2, window.devicePixelRatio || 1),
+        width: size * 2,
+        height: size * 2,
+        phi: 0,
+        theta: 0.25,
+        dark: 1,
+        diffuse: 1.4,
+        mapSamples: 18000,
+        mapBrightness: 6,
+        baseColor:   [0.18, 0.22, 0.34],  // continent surface
+        markerColor: [0.15, 0.65, 0.59],  // trading hubs (bull/teal)
+        glowColor:   [0.16, 0.38, 1.0],   // accent-blue atmosphere
+        markers: [
+          { location: [ 40.7128,  -74.0060], size: 0.06 }, // NY
+          { location: [ 51.5072,   -0.1276], size: 0.06 }, // London
+          { location: [ 50.1109,    8.6821], size: 0.05 }, // Frankfurt
+          { location: [ 35.6762,  139.6503], size: 0.06 }, // Tokyo
+          { location: [ 22.3193,  114.1694], size: 0.05 }, // Hong Kong
+          { location: [  1.3521,  103.8198], size: 0.05 }, // Singapore
+          { location: [-33.8688,  151.2093], size: 0.05 }, // Sydney
+          { location: [-23.5505,  -46.6333], size: 0.05 }, // São Paulo
+          { location: [-26.2041,   28.0473], size: 0.04 }, // Johannesburg
+          { location: [ 25.2048,   55.2708], size: 0.05 }, // Dubai
+        ],
+        // ~80s per revolution for a cinematic rotation at this size.
+        onRender: (state) => {
+          state.phi = phiRef.current;
+          phiRef.current += 0.0008;
+        },
       });
-    }
+    }).catch(() => { /* cobe load failed — hero just shows backdrops */ });
 
-    // Market hubs in (lat, lng) degrees. Projected and rotated each
-    // frame so they sit on the surface and rotate with the globe.
-    const hubsLL = [
-      { lat:  40.7, lng:  -74.0 }, // NY
-      { lat:  51.5, lng:   -0.1 }, // London
-      { lat:  50.1, lng:    8.7 }, // Frankfurt
-      { lat:  35.7, lng:  139.7 }, // Tokyo
-      { lat:  22.3, lng:  114.2 }, // Hong Kong
-      { lat:   1.3, lng:  103.8 }, // Singapore
-      { lat: -33.9, lng:  151.2 }, // Sydney
-      { lat: -23.5, lng:  -46.6 }, // São Paulo
-      { lat: -26.2, lng:   28.0 }, // Johannesburg
-      { lat:  25.0, lng:   55.3 }, // Dubai
-    ];
-    const hubsXYZ = hubsLL.map(({ lat, lng }) => {
-      const phi = (lat * Math.PI) / 180;
-      const lam = (lng * Math.PI) / 180;
-      return {
-        x: Math.cos(phi) * Math.cos(lam),
-        y: Math.sin(phi),
-        z: Math.cos(phi) * Math.sin(lam),
-      };
-    });
-
-    // Arc queue — at most 4 in flight at a time. Each arc has a start/
-    // end hub index, start-time and duration. When an arc finishes, we
-    // pop it and schedule a fresh random pair.
-    type Arc = { from: number; to: number; startS: number; durS: number };
-    const arcs: Arc[] = [];
-    function scheduleArc(at: number) {
-      const from = Math.floor(Math.random() * hubsXYZ.length);
-      let to = Math.floor(Math.random() * hubsXYZ.length);
-      while (to === from) to = Math.floor(Math.random() * hubsXYZ.length);
-      arcs.push({ from, to, startS: at, durS: 2 + Math.random() * 1.5 });
-    }
-
-    let rafId = 0;
-    let t0 = 0;
-
-    function rotateY(p: {x:number;y:number;z:number}, cosA: number, sinA: number) {
-      return {
-        x: p.x * cosA + p.z * sinA,
-        y: p.y,
-        z: -p.x * sinA + p.z * cosA,
-      };
-    }
-
-    // Draw a great-circle-ish arc above the sphere between two surface
-    // points. We sample N intermediate points along the geodesic (slerp),
-    // lift each by an altitude curve, and stroke a polyline. Behind-globe
-    // pieces are skipped.
-    function drawArc(
-      a: {x:number;y:number;z:number},
-      b: {x:number;y:number;z:number},
-      progress: number,
-    ) {
-      const STEPS = 40;
-      const dot = a.x*b.x + a.y*b.y + a.z*b.z;
-      const omega = Math.acos(Math.max(-1, Math.min(1, dot)));
-      if (omega < 0.01) return;
-      const sinO = Math.sin(omega);
-      const head = Math.max(0.02, Math.min(1, progress));
-      ctx!.beginPath();
-      let started = false;
-      for (let i = 0; i <= STEPS; i++) {
-        const u = (i / STEPS) * head;
-        const w1 = Math.sin((1 - u) * omega) / sinO;
-        const w2 = Math.sin(u * omega) / sinO;
-        // Geodesic point on the unit sphere.
-        const gx = a.x * w1 + b.x * w2;
-        const gy = a.y * w1 + b.y * w2;
-        const gz = a.z * w1 + b.z * w2;
-        // Altitude bump — sin curve peaks mid-arc, ~25% of radius high.
-        const alt = Math.sin(u * Math.PI) * 0.32;
-        const r = 1 + alt;
-        const px = cx + gx * R * r;
-        const py = cy + gy * R * r;
-        // Hide segments whose underlying surface point is on the far side.
-        if (gz < -0.05) {
-          if (started) { ctx!.stroke(); ctx!.beginPath(); started = false; }
-          continue;
-        }
-        if (!started) { ctx!.moveTo(px, py); started = true; }
-        else ctx!.lineTo(px, py);
-      }
-      ctx!.stroke();
-
-      // Head-of-arc glow dot — only when the head is on the visible side.
-      if (head < 0.999) {
-        const u = head;
-        const w1 = Math.sin((1 - u) * omega) / sinO;
-        const w2 = Math.sin(u * omega) / sinO;
-        const gx = a.x * w1 + b.x * w2;
-        const gy = a.y * w1 + b.y * w2;
-        const gz = a.z * w1 + b.z * w2;
-        if (gz >= -0.05) {
-          const alt = Math.sin(u * Math.PI) * 0.32;
-          const r = 1 + alt;
-          const px = cx + gx * R * r;
-          const py = cy + gy * R * r;
-          const grad = ctx!.createRadialGradient(px, py, 0, px, py, 6);
-          grad.addColorStop(0, "rgba(125, 211, 252, 1)");
-          grad.addColorStop(1, "rgba(125, 211, 252, 0)");
-          ctx!.fillStyle = grad;
-          ctx!.beginPath();
-          ctx!.arc(px, py, 6, 0, Math.PI * 2);
-          ctx!.fill();
-        }
-      }
-    }
-
-    function frame(t: number) {
-      if (!t0) t0 = t;
-      const elapsed = (t - t0) / 1000;
-      // 80s per revolution — slower than before, more cinematic at this size.
-      const angle = (elapsed * Math.PI * 2) / 80;
-      const cosA = Math.cos(angle);
-      const sinA = Math.sin(angle);
-
-      // Keep ~4 arcs running at a time.
-      while (arcs.length < 4) scheduleArc(elapsed);
-
-      if (!ctx) return;
-      ctx.clearRect(0, 0, size, size);
-
-      // Outer atmosphere halo (well outside the body).
-      const halo = ctx.createRadialGradient(cx, cy, R * 0.95, cx, cy, R * 1.5);
-      halo.addColorStop(0, "rgba(41, 98, 255, 0.32)");
-      halo.addColorStop(1, "rgba(41, 98, 255, 0)");
-      ctx.fillStyle = halo;
-      ctx.fillRect(0, 0, size, size);
-
-      // Sphere body radial gradient — gives the dots a surface.
-      const body = ctx.createRadialGradient(cx - R * 0.32, cy - R * 0.32, R * 0.1, cx, cy, R);
-      body.addColorStop(0, "#1a2540");
-      body.addColorStop(0.7, "#0d1525");
-      body.addColorStop(1, "#070b18");
-      ctx.beginPath();
-      ctx.arc(cx, cy, R, 0, Math.PI * 2);
-      ctx.fillStyle = body;
-      ctx.fill();
-
-      // Dots — rotate around Y, project to 2D, draw with depth shading.
-      for (const d of baseDots) {
-        const rx = d.x * cosA + d.z * sinA;
-        const rz = -d.x * sinA + d.z * cosA;
-        const ry = d.y;
-        const depth = (rz + 1) / 2; // 0 = far, 1 = near
-        const alpha = 0.18 + depth * 0.62;
-        const dotSize = 0.7 + depth * 1.5;
-        const px = cx + rx * R;
-        const py = cy + ry * R;
-        const lat = Math.asin(ry);
-        const hue = 200 + lat * 14;
-        ctx.fillStyle = `hsla(${hue.toFixed(0)}, 85%, 72%, ${alpha.toFixed(3)})`;
-        ctx.beginPath();
-        ctx.arc(px, py, dotSize, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Equator + a meridian for orientation.
-      ctx.strokeStyle = "rgba(180, 200, 255, 0.08)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, R, R * 0.04, 0, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Animated trade arcs.
-      ctx.lineWidth = 1.6;
-      for (let ai = arcs.length - 1; ai >= 0; ai--) {
-        const arc = arcs[ai];
-        const u = (elapsed - arc.startS) / arc.durS;
-        if (u >= 1.4) {
-          arcs.splice(ai, 1);
-          continue;
-        }
-        const head = Math.min(1, u);
-        const tail = Math.max(0, u - 0.6) / 0.4; // fade-out trail
-        const a = rotateY(hubsXYZ[arc.from], cosA, sinA);
-        const b = rotateY(hubsXYZ[arc.to], cosA, sinA);
-        ctx.strokeStyle = `rgba(125, 211, 252, ${(0.85 * (1 - tail)).toFixed(3)})`;
-        drawArc(a, b, head);
-      }
-
-      // Market hubs — only those visible on the near hemisphere.
-      for (let i = 0; i < hubsXYZ.length; i++) {
-        const h = rotateY(hubsXYZ[i], cosA, sinA);
-        if (h.z < -0.1) continue;
-        const px = cx + h.x * R;
-        const py = cy + h.y * R;
-        const local = 0.5 + 0.5 * Math.sin(elapsed * 2.0 + i * 0.7);
-        // Glow ring
-        ctx.strokeStyle = `rgba(38, 166, 154, ${(0.55 * (1 - local)).toFixed(3)})`;
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        ctx.arc(px, py, 4 + local * 12, 0, Math.PI * 2);
-        ctx.stroke();
-        // Core
-        ctx.fillStyle = "rgba(38, 166, 154, 0.95)";
-        ctx.beginPath();
-        ctx.arc(px, py, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      rafId = requestAnimationFrame(frame);
-    }
-    rafId = requestAnimationFrame(frame);
-
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelled = true;
+      globe?.destroy();
+    };
   }, [size]);
 
   return (
     <div className="relative" style={{ width: size, height: size }}>
       {/* Wide outer halo backlight reaching beyond the canvas. */}
       <div
-        className="absolute -inset-32 -z-10 rounded-full bg-accent/20 blur-[120px]"
+        className="absolute -inset-32 -z-10 rounded-full bg-accent/25 blur-[140px]"
         aria-hidden
       />
-      <canvas ref={canvasRef} aria-hidden className="block" />
+      <canvas
+        ref={canvasRef}
+        aria-hidden
+        style={{ width: size, height: size, contain: "layout paint size" }}
+        className="block"
+      />
     </div>
   );
 }

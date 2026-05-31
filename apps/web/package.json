@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cobe": "^0.6.4",
     "lightweight-charts": "^5.0.5",
     "next": "15.1.6",
     "react": "19.0.0",
