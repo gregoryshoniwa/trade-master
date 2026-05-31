@@ -169,7 +169,7 @@ async def place_quick_trade(
             if not verdict.ok:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    f"risk rejected: {verdict.reasons[0] if verdict.reasons else 'no detail'}",
+                    f"risk rejected: {verdict.reason or 'no detail'}",
                 )
             applied_stake = verdict.applied_stake_usd or body.stake_usd
 
