@@ -649,13 +649,20 @@ export const api = {
 
   listMeetings: (
     companyId: string,
-    opts?: { kind?: "review" | "meeting"; limit?: number },
+    opts?: {
+      kind?: "review" | "meeting";
+      employee_id?: string;
+      limit?: number;
+      offset?: number;
+    },
   ) => {
     const p = new URLSearchParams();
     if (opts?.kind) p.set("kind", opts.kind);
+    if (opts?.employee_id) p.set("employee_id", opts.employee_id);
     if (opts?.limit != null) p.set("limit", String(opts.limit));
+    if (opts?.offset != null) p.set("offset", String(opts.offset));
     const qs = p.toString();
-    return request<MeetingSummary[]>(
+    return request<MeetingsPage>(
       `/api/v1/companies/${companyId}/meetings${qs ? `?${qs}` : ""}`,
     );
   },
@@ -809,6 +816,11 @@ export type MeetingSummary = {
   narrative_preview: string | null;
   has_transcript: boolean;
   created_at: string;
+};
+
+export type MeetingsPage = {
+  items: MeetingSummary[];
+  total: number;
 };
 
 export type MeetingTurn = {

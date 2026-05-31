@@ -39,6 +39,14 @@ class MeetingSummary(BaseModel):
     created_at: datetime
 
 
+class MeetingsPage(BaseModel):
+    """Paginated envelope. `total` is the count under the same filters
+    (kind, employee_id) — drives the page indicator without a second
+    round trip from the frontend."""
+    items: list[MeetingSummary]
+    total: int
+
+
 class MeetingTranscriptTurn(BaseModel):
     role: str
     content: str
@@ -78,22 +86,37 @@ def _agenda_from_reason(reason: str | None) -> str | None:
     return reason[len(prefix):] if reason.startswith(prefix) else reason
 
 
-@router.get("", response_model=list[MeetingSummary])
+@router.get("", response_model=MeetingsPage)
 async def list_meetings(
     company_id: UUID, account_id: CurrentAccount,
     kind: Annotated[Literal["review", "meeting"] | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    employee_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
 ):
+    """Paginated list of reviews + 1:1 meetings, filterable by kind and
+    by the employee an agent met with. Returns `total` so the UI can
+    render a "page X of Y" without a second roundtrip."""
     clauses = ["ma.company_id = $1", "ma.action_kind IN ('review', 'meeting')"]
     args: list[Any] = [company_id]
     if kind is not None:
         args.append(kind)
         clauses.append(f"ma.action_kind = ${len(args)}")
+    if employee_id is not None:
+        args.append(employee_id)
+        clauses.append(f"ma.employee_agent_id = ${len(args)}")
     where = " AND ".join(clauses)
-    args.append(limit)
 
     async with acquire() as conn:
         await _ensure_member(conn, company_id, account_id)
+        total = await conn.fetchval(
+            f"SELECT COUNT(*) FROM manager_actions ma WHERE {where}",
+            *args,
+        )
+        # Tack on limit + offset for the paged query — fresh positional
+        # slots so we don't reorder the filter args above.
+        args.append(limit)
+        args.append(offset)
         rows = await conn.fetch(
             f"""
             SELECT ma.id, ma.action_kind, ma.reason, ma.llm_narrative,
@@ -106,25 +129,28 @@ async def list_meetings(
             LEFT JOIN agents emp ON emp.id = ma.employee_agent_id
             WHERE {where}
             ORDER BY ma.created_at DESC
-            LIMIT ${len(args)}
+            LIMIT ${len(args) - 1} OFFSET ${len(args)}
             """,
             *args,
         )
-    return [
-        MeetingSummary(
-            id=r["id"],
-            kind=r["action_kind"],
-            manager_agent_id=r["manager_agent_id"],
-            manager_name=r["manager_name"],
-            employee_name=r["employee_name"],
-            employee_agent_id=r["employee_agent_id"],
-            agenda=_agenda_from_reason(r["reason"]),
-            narrative_preview=_preview(r["llm_narrative"]),
-            has_transcript=r["conversation_id"] is not None,
-            created_at=r["created_at"],
-        )
-        for r in rows
-    ]
+    return MeetingsPage(
+        total=int(total or 0),
+        items=[
+            MeetingSummary(
+                id=r["id"],
+                kind=r["action_kind"],
+                manager_agent_id=r["manager_agent_id"],
+                manager_name=r["manager_name"],
+                employee_name=r["employee_name"],
+                employee_agent_id=r["employee_agent_id"],
+                agenda=_agenda_from_reason(r["reason"]),
+                narrative_preview=_preview(r["llm_narrative"]),
+                has_transcript=r["conversation_id"] is not None,
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ],
+    )
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)

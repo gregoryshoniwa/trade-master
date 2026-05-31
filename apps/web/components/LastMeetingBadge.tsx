@@ -30,13 +30,13 @@ export default function LastMeetingBadge({
 
   useEffect(() => {
     let cancelled = false;
-    api.listMeetings(companyId, { limit: 50 }).then((all) => {
+    api.listMeetings(companyId, { limit: 50 }).then((page) => {
       if (cancelled) return;
       // Manager profile: latest meeting they ran.
       // Employee profile: latest meeting/review they were in.
       const match = isManager
-        ? all.find((m) => m.kind === "review" || m.employee_name !== null)
-        : all.find((m) => m.kind === "meeting" && m.employee_agent_id === agentId);
+        ? page.items.find((m) => m.kind === "review" || m.employee_name !== null)
+        : page.items.find((m) => m.kind === "meeting" && m.employee_agent_id === agentId);
       setLatest(match ?? null);
     }).catch(() => { /* silent */ });
     return () => { cancelled = true; };
