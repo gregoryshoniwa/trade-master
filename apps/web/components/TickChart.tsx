@@ -84,8 +84,25 @@ type Props = {
   highlightedIntentId?: string | null;
 };
 
-const CANDLE_GRANULARITY = 60; // seconds per OHLC bar in candle mode
-const CANDLE_COUNT = 240; // ~4 hours of 1-min candles on initial load
+// Deriv-supported intraday granularities (seconds per bar). We don't
+// expose 8h/1d here because the dashboard is built around an
+// intraday session view.
+const GRANULARITY_OPTIONS: { secs: number; label: string }[] = [
+  { secs: 60,    label: "1m"  },
+  { secs: 300,   label: "5m"  },
+  { secs: 900,   label: "15m" },
+  { secs: 1800,  label: "30m" },
+  { secs: 3600,  label: "1h"  },
+  { secs: 14400, label: "4h"  },
+];
+const DEFAULT_GRANULARITY = 60; // 1-minute bars
+// We aim to keep ~4 hours of context across granularities, with a
+// hard cap (Deriv refuses excessive counts). 4h ÷ 60s = 240 bars,
+// 4h ÷ 300s = 48 bars, etc.
+const TARGET_CONTEXT_SECS = 4 * 60 * 60;
+function candleCountFor(granularity: number): number {
+  return Math.min(500, Math.max(48, Math.ceil(TARGET_CONTEXT_SECS / granularity)));
+}
 const DERIV_WS = "wss://ws.derivws.com/websockets/v3?app_id=1089";
 
 export default function TickChart({
@@ -133,6 +150,8 @@ export default function TickChart({
   const [historyRows, setHistoryRows] = useState<number | null>(null);
   const [mode, setMode] = useState<ChartMode>("line");
   const modeRef = useRef<ChartMode>(mode);
+  const [granularity, setGranularity] = useState<number>(DEFAULT_GRANULARITY);
+  const granularityRef = useRef<number>(granularity);
   const [showSMA20, setShowSMA20] = useState(false);
   const [showSMA50, setShowSMA50] = useState(false);
   const theme = useTheme();
@@ -313,10 +332,11 @@ export default function TickChart({
     sma50Ref.current?.applyOptions({ color: c.bear });
   }, [theme]);
 
-  // ── symbol or mode change → reload history + reset overlays ─────────
+  // ── symbol / mode / granularity change → reload history + reset ─────
   useEffect(() => {
     symbolRef.current = symbol;
     modeRef.current = mode;
+    granularityRef.current = granularity;
     lastEpochRef.current = 0;
     curBarRef.current = null;
     setLatest(null);
@@ -383,7 +403,7 @@ export default function TickChart({
       // One-shot WS request; closes after the response.
       void (async () => {
         try {
-          const candles = await fetchDerivCandles(symbol, CANDLE_GRANULARITY, CANDLE_COUNT);
+          const candles = await fetchDerivCandles(symbol, granularity, candleCountFor(granularity));
           if (cancelled || symbolRef.current !== symbol || modeRef.current !== "candles") return;
           candleSeriesRef.current?.setData(candles);
           priceHistoryRef.current = candles.map((c) => ({
@@ -408,7 +428,20 @@ export default function TickChart({
     return () => {
       cancelled = true;
     };
-  }, [symbol, mode]);
+  }, [symbol, mode, granularity]);
+
+  // Restore the user's last-picked granularity on mount.
+  useEffect(() => {
+    const v = Number(localStorage.getItem("tm.chartGranularity"));
+    if (Number.isFinite(v) && GRANULARITY_OPTIONS.some((o) => o.secs === v)) {
+      setGranularity(v);
+      granularityRef.current = v;
+    }
+  }, []);
+  useEffect(() => {
+    granularityRef.current = granularity;
+    localStorage.setItem("tm.chartGranularity", String(granularity));
+  }, [granularity]);
 
   // ── WebSocket (gateway tick + forecast feed) ───────────────────────
   useEffect(() => {
@@ -449,7 +482,8 @@ export default function TickChart({
               );
             } else {
               // Aggregate into the current OHLC bar.
-              const bucket = (Math.floor(t / CANDLE_GRANULARITY) * CANDLE_GRANULARITY) as UTCTimestamp;
+              const g = granularityRef.current;
+              const bucket = (Math.floor(t / g) * g) as UTCTimestamp;
               const cur = curBarRef.current;
               if (!cur || (cur.time as number) < (bucket as number)) {
                 const bar: CandlestickData<UTCTimestamp> = {
@@ -679,6 +713,12 @@ export default function TickChart({
         </div>
         <div className="flex items-center gap-1 rounded-md border border-border bg-bg-card/60 p-1 text-[11px]">
           <ModeToggle value={mode} onChange={setMode} />
+          {mode === "candles" && (
+            <>
+              <span className="h-4 w-px bg-border" aria-hidden />
+              <GranularityPicker value={granularity} onChange={setGranularity} />
+            </>
+          )}
           <span className="h-4 w-px bg-border" aria-hidden />
           <IndicatorChips
             sma20={showSMA20} onSMA20={setShowSMA20}
@@ -839,6 +879,32 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/** Tight bar-interval picker — only meaningful in candle mode (line mode
+ *  shows raw ticks). Hidden when in line mode by the parent. */
+function GranularityPicker({
+  value, onChange,
+}: { value: number; onChange: (secs: number) => void }) {
+  return (
+    <div className="flex gap-0.5">
+      {GRANULARITY_OPTIONS.map((o) => (
+        <button
+          key={o.secs}
+          type="button"
+          onClick={() => onChange(o.secs)}
+          className={`rounded px-1.5 py-0.5 transition ${
+            value === o.secs
+              ? "bg-accent text-white"
+              : "text-text-dim hover:text-text"
+          }`}
+          title={`${o.label} bars`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
