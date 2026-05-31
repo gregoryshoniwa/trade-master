@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
+import DerivBalance from "@/components/DerivBalance";
 import KillSwitch from "@/components/KillSwitch";
 import Landing from "@/components/Landing";
 import SafetyBadges from "@/components/SafetyBadges";
@@ -220,6 +221,7 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <DerivBalance />
             {active && <SafetyBadges companyId={active.id} />}
             {active && <KillSwitch companyId={active.id} />}
             <AssetPicker value={symbol} onChange={chooseSymbol} />

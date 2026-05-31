@@ -5,7 +5,6 @@ import { useState } from "react";
 
 import AgentMenu from "@/components/AgentMenu";
 import DailySummary from "@/components/DailySummary";
-import DerivBalance from "@/components/DerivBalance";
 import GoalProgress from "@/components/GoalProgress";
 import NotificationBell from "@/components/NotificationBell";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -60,7 +59,6 @@ export default function TopBar({ onMobileMenu }: Props) {
 
       <div className="flex items-center gap-2">
         {showCompanyExtras && active && <AgentMenu companyId={active.id} />}
-        {me && <DerivBalance />}
         {me && active && (
           <div className="relative">
             <button
