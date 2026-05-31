@@ -206,11 +206,13 @@ export default function Landing() {
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden border-b border-border">
-        {/* layered background: mesh + two slow lens flares */}
-        <div className="tm-mesh absolute inset-0 opacity-80" aria-hidden />
-        <div className="tm-flare-a absolute left-[15%] top-[10%] h-[420px] w-[420px]" aria-hidden />
-        <div className="tm-flare-b absolute right-[10%] bottom-[5%] h-[480px] w-[480px]" aria-hidden />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/50 to-bg" aria-hidden />
+        {/* layered background: mesh + grid + three saturated flares */}
+        <div className="tm-mesh absolute inset-0 opacity-95" aria-hidden />
+        <div className="tm-grid absolute inset-0 opacity-90" aria-hidden />
+        <div className="tm-flare-a absolute left-[8%] top-[5%] h-[560px] w-[560px]" aria-hidden />
+        <div className="tm-flare-b absolute right-[5%] bottom-[5%] h-[640px] w-[640px]" aria-hidden />
+        <div className="tm-flare-c absolute left-1/2 top-1/3 h-[520px] w-[520px] -translate-x-1/2" aria-hidden />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/40 to-bg" aria-hidden />
 
         <div className="relative mx-auto max-w-6xl px-6 py-20 sm:py-28">
           <div className="grid items-center gap-12 lg:grid-cols-[1.15fr_1fr]">
@@ -458,8 +460,9 @@ export default function Landing() {
 
       {/* ── CTA strip ────────────────────────────────────────────── */}
       <section className="relative overflow-hidden border-b border-border py-20">
-        <div className="tm-mesh absolute inset-0 opacity-60" aria-hidden />
-        <div className="tm-flare-a absolute left-1/3 top-1/4 h-[300px] w-[300px]" aria-hidden />
+        <div className="tm-mesh absolute inset-0 opacity-90" aria-hidden />
+        <div className="tm-flare-a absolute left-1/4 top-1/4 h-[420px] w-[420px]" aria-hidden />
+        <div className="tm-flare-b absolute right-1/4 bottom-1/4 h-[380px] w-[380px]" aria-hidden />
         <div className="relative mx-auto max-w-4xl px-6 text-center">
           <h2 data-reveal className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Spin up a paper firm in 60 seconds.
@@ -497,75 +500,165 @@ export default function Landing() {
   );
 }
 
-/** SVG wireframe globe — latitude + longitude lines on a sphere with
- *  a slow rotation. Trading "hubs" pulse at key cities to telegraph
- *  the global-markets story without a real map. */
+/** Canvas-based dotted globe with depth shading, slow rotation, and
+ *  pulsing market hubs. ~700 dots distributed on a sphere via a
+ *  Fibonacci lattice; each frame we rotate around the Y axis, project
+ *  to 2D, and draw with size + alpha keyed off the dot's z-depth so
+ *  the far hemisphere reads as the "back of the globe". */
 function GlobeVisual() {
-  // Eight points along the equator/meridians representing market hubs.
-  const hubs = [
-    { x: 60,  y: 110, label: "NY" },
-    { x: 170, y: 80,  label: "LDN" },
-    { x: 260, y: 100, label: "FRA" },
-    { x: 290, y: 160, label: "TKY" },
-    { x: 240, y: 220, label: "HKG" },
-    { x: 160, y: 250, label: "SYD" },
-    { x: 80,  y: 200, label: "SAO" },
-    { x: 40,  y: 160, label: "JNB" },
-  ];
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // High-DPI: render at devicePixelRatio for crisp dots without
+    // bumping the CSS box.
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cssSize = 380;
+    canvas.width = cssSize * dpr;
+    canvas.height = cssSize * dpr;
+    canvas.style.width = `${cssSize}px`;
+    canvas.style.height = `${cssSize}px`;
+    ctx.scale(dpr, dpr);
+
+    const cx = cssSize / 2;
+    const cy = cssSize / 2;
+    const R = cssSize * 0.42;
+
+    // Fibonacci lattice — distributes N points evenly on a sphere.
+    const N = 700;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const baseDots: { x: number; y: number; z: number }[] = [];
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (i / (N - 1)) * 2;
+      const radius = Math.sqrt(1 - y * y);
+      const theta = golden * i;
+      baseDots.push({
+        x: Math.cos(theta) * radius,
+        y: y,
+        z: Math.sin(theta) * radius,
+      });
+    }
+
+    // Market hubs in (lat, lng) degrees. We project these the same
+    // way each frame so they rotate with the globe and pulse on top.
+    const hubsLL = [
+      { lat:  40.7, lng:  -74.0 }, // NY
+      { lat:  51.5, lng:   -0.1 }, // London
+      { lat:  50.1, lng:    8.7 }, // Frankfurt
+      { lat:  35.7, lng:  139.7 }, // Tokyo
+      { lat:  22.3, lng:  114.2 }, // Hong Kong
+      { lat: -33.9, lng:  151.2 }, // Sydney
+      { lat: -23.5, lng:  -46.6 }, // São Paulo
+      { lat: -26.2, lng:   28.0 }, // Johannesburg
+    ];
+    const hubsXYZ = hubsLL.map(({ lat, lng }) => {
+      const phi = (lat * Math.PI) / 180;
+      const lam = (lng * Math.PI) / 180;
+      return {
+        x: Math.cos(phi) * Math.cos(lam),
+        y: Math.sin(phi),
+        z: Math.cos(phi) * Math.sin(lam),
+      };
+    });
+
+    let rafId = 0;
+    let t0 = 0;
+    function frame(t: number) {
+      if (!t0) t0 = t;
+      const elapsed = (t - t0) / 1000;
+      // 60s for a full rotation — matches the perceived "earth-like" speed.
+      const angle = (elapsed * Math.PI * 2) / 60;
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+
+      if (!ctx) return;
+      ctx.clearRect(0, 0, cssSize, cssSize);
+
+      // Atmosphere halo
+      const halo = ctx.createRadialGradient(cx, cy, R * 0.85, cx, cy, R * 1.25);
+      halo.addColorStop(0, "rgba(41, 98, 255, 0.18)");
+      halo.addColorStop(1, "rgba(41, 98, 255, 0)");
+      ctx.fillStyle = halo;
+      ctx.fillRect(0, 0, cssSize, cssSize);
+
+      // Sphere body — very dark navy, gives the dots a surface to sit on.
+      const body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.3, R * 0.1, cx, cy, R);
+      body.addColorStop(0, "#1a2235");
+      body.addColorStop(0.7, "#0f1623");
+      body.addColorStop(1, "#0a1020");
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.fillStyle = body;
+      ctx.fill();
+
+      // Dots — rotate around Y, project to 2D, draw with depth shading.
+      for (const d of baseDots) {
+        const rx = d.x * cosA + d.z * sinA;
+        const rz = -d.x * sinA + d.z * cosA;
+        const ry = d.y;
+        // Front-hemisphere dots are bright; back-hemisphere dim.
+        const depth = (rz + 1) / 2; // 0 = far, 1 = near
+        const alpha = 0.15 + depth * 0.55;
+        const size = 0.6 + depth * 1.4;
+        const px = cx + rx * R;
+        const py = cy + ry * R;
+        // Subtle cyan→blue tint based on latitude so the globe doesn't
+        // read as monotone.
+        const lat = Math.asin(ry); // -PI/2 .. PI/2
+        const hue = 200 + lat * 14;
+        ctx.fillStyle = `hsla(${hue.toFixed(0)}, 80%, 70%, ${alpha.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(px, py, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Subtle equator ring for orientation.
+      ctx.strokeStyle = "rgba(180, 200, 255, 0.08)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, R, R * 0.04, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Market hubs — pulse + ring on the front hemisphere only.
+      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
+      for (let i = 0; i < hubsXYZ.length; i++) {
+        const h = hubsXYZ[i];
+        const rx = h.x * cosA + h.z * sinA;
+        const rz = -h.x * sinA + h.z * cosA;
+        const ry = h.y;
+        if (rz < -0.15) continue; // behind the globe
+        const px = cx + rx * R;
+        const py = cy + ry * R;
+        const local = 0.5 + 0.5 * Math.sin(elapsed * 2.2 + i * 0.9);
+        // Glow ring
+        ctx.strokeStyle = `rgba(38, 166, 154, ${(0.45 * (1 - local)).toFixed(3)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(px, py, 3 + local * 9, 0, Math.PI * 2);
+        ctx.stroke();
+        // Core
+        ctx.fillStyle = `rgba(38, 166, 154, ${(0.85 + 0.15 * pulse).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafId = requestAnimationFrame(frame);
+    }
+    rafId = requestAnimationFrame(frame);
+
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
   return (
-    <div className="relative mx-auto h-[340px] w-[340px]">
-      {/* Halo backlight */}
-      <div className="absolute inset-0 -z-10 rounded-full bg-accent/10 blur-3xl" />
-      {/* Rotating wireframe */}
-      <svg
-        viewBox="0 0 320 320"
-        className="tm-globe absolute inset-0 h-full w-full"
-        aria-hidden
-      >
-        <defs>
-          <radialGradient id="globe-grad" cx="50%" cy="40%" r="60%">
-            <stop offset="0%" stopColor="rgba(41,98,255,0.18)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0)" />
-          </radialGradient>
-        </defs>
-        <circle cx="160" cy="160" r="150" fill="url(#globe-grad)" />
-        <circle cx="160" cy="160" r="150" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-        {/* Longitude lines (ellipses with varying x-radius) */}
-        {[150, 110, 70, 30].map((rx, i) => (
-          <ellipse key={`lo-${i}`} cx="160" cy="160" rx={rx} ry="150"
-            fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth="1" />
-        ))}
-        {/* Latitude lines */}
-        {[40, 80, 120, 160, 200, 240, 280].map((cy) => {
-          const dy = cy - 160;
-          const rx = Math.sqrt(Math.max(0, 150 * 150 - dy * dy));
-          return (
-            <ellipse key={`la-${cy}`} cx="160" cy={cy} rx={rx} ry={rx * 0.18}
-              fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="1" />
-          );
-        })}
-        {/* Trading hubs */}
-        {hubs.map((h, i) => (
-          <g key={h.label}>
-            <circle cx={h.x} cy={h.y} r="3" fill="#26A69A">
-              <animate
-                attributeName="r"
-                values="3;6;3"
-                dur="2.4s"
-                begin={`${i * 0.3}s`}
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="1;0.4;1"
-                dur="2.4s"
-                begin={`${i * 0.3}s`}
-                repeatCount="indefinite"
-              />
-            </circle>
-          </g>
-        ))}
-      </svg>
+    <div className="relative mx-auto h-[380px] w-[380px]">
+      {/* Outer halo backlight */}
+      <div className="absolute inset-0 -z-10 rounded-full bg-accent/15 blur-3xl" />
+      <canvas ref={canvasRef} aria-hidden className="block" />
     </div>
   );
 }

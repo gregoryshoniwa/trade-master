@@ -181,31 +181,50 @@ html, body {
   animation: tm-pulse-ring 2.4s infinite;
 }
 
-/* Lens flare layer. Used by the hero — two soft cyan/blue radials
-   that drift slowly so the background never feels static. The
-   blend mode brightens dark surfaces without washing out copy. */
+/* Lens flare layer. Used by the hero — three saturated radials that
+   drift slowly so the background reads as a charged trading-floor,
+   not a black void. mix-blend-mode: screen brightens dark surfaces
+   without washing copy. */
 @keyframes tm-flare-drift {
-  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
-  50%     { transform: translate3d(2%, -1%, 0) scale(1.08); opacity: 1; }
+  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+  50%     { transform: translate3d(3%, -2%, 0) scale(1.12); opacity: 1; }
 }
 @keyframes tm-flare-drift-b {
-  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
-  50%     { transform: translate3d(-3%, 2%, 0) scale(1.05); opacity: 0.95; }
+  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.95; }
+  50%     { transform: translate3d(-4%, 3%, 0) scale(1.08); opacity: 1; }
 }
-.tm-flare-a, .tm-flare-b {
+@keyframes tm-flare-drift-c {
+  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
+  50%     { transform: translate3d(2%, 2%, 0) scale(1.18); opacity: 0.9; }
+}
+.tm-flare-a, .tm-flare-b, .tm-flare-c {
   pointer-events: none;
   position: absolute;
   border-radius: 9999px;
-  filter: blur(60px);
+  filter: blur(50px);
   mix-blend-mode: screen;
 }
 .tm-flare-a {
-  background: radial-gradient(circle at center, rgba(41, 98, 255, 0.65), transparent 60%);
+  background: radial-gradient(circle at center, rgba(41, 98, 255, 0.95), rgba(41,98,255,0.2) 35%, transparent 65%);
   animation: tm-flare-drift 14s ease-in-out infinite;
 }
 .tm-flare-b {
-  background: radial-gradient(circle at center, rgba(38, 166, 154, 0.55), transparent 60%);
+  background: radial-gradient(circle at center, rgba(38, 166, 154, 0.85), rgba(38,166,154,0.18) 35%, transparent 65%);
   animation: tm-flare-drift-b 18s ease-in-out infinite;
+}
+.tm-flare-c {
+  background: radial-gradient(circle at center, rgba(125, 99, 255, 0.7), rgba(125,99,255,0.15) 35%, transparent 65%);
+  animation: tm-flare-drift-c 22s ease-in-out infinite;
+}
+
+/* Subtle blueprint grid — sits behind the hero copy to telegraph
+   "engineered system" without competing with the foreground. */
+.tm-grid {
+  background-image:
+    linear-gradient(rgba(148,163,255,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,255,0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
 }
 
 /* Wireframe globe rotation — spins the wrapper, not the SVG itself,
@@ -230,7 +249,7 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   [data-reveal],
   .tm-float, .tm-mesh, .tm-stream-line, .tm-pulse-ring,
-  .tm-flare-a, .tm-flare-b, .tm-globe, .tm-candle {
+  .tm-flare-a, .tm-flare-b, .tm-flare-c, .tm-globe, .tm-candle {
     animation: none !important;
     transform: none !important;
     opacity: 1 !important;
