@@ -237,53 +237,52 @@ export default function Landing() {
         />
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/30 to-bg" aria-hidden />
 
-        <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-6xl flex-col px-6 pb-6 pt-6 sm:pb-8 sm:pt-8">
-          {/* Top row: AI-forecast candle card pinned to the upper-right
-              over the globe. Positioned absolutely so it floats and
-              the headline below it gets the full left column. */}
-          <div className="hidden justify-end lg:flex">
-            <div data-reveal>
-              <CandleMini />
+        <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-6xl flex-col px-6 pb-6 pt-6 sm:pb-8 sm:pt-6">
+          {/* AI-forecast candle card pinned to the upper-right of the
+              hero. Absolute so it doesn't push the headline down. */}
+          <div
+            data-reveal
+            className="pointer-events-auto absolute right-6 top-6 z-10 hidden lg:block"
+          >
+            <CandleMini />
+          </div>
+
+          {/* Headline + copy. Starts directly under the nav; no
+              vertical centering. */}
+          <div className="max-w-2xl" data-reveal>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
+              <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
+              The first AI firm with real meetings
+            </div>
+            <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl xl:text-7xl">
+              Trade with a <span className="text-accent">team of AI agents</span> that{" "}
+              <span className="text-bull">meet, review, and rewrite</span> each other.
+            </h1>
+            <p className="mt-5 max-w-xl text-base text-text-dim sm:text-lg">
+              Every other "AI trading" tool is one model in a costume.
+              TradeMaster is a firm: a manager agent, employee traders, a
+              risk officer. They sit down for 1:1 meetings every 4 hours.
+              They write postmortems. They argue. You are the CEO.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <Link href="/signup"
+                className="rounded-md bg-bull px-6 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
+                Start free — no card
+              </Link>
+              <a href="#how"
+                className="rounded-md border border-border bg-bg-card/40 px-6 py-3 text-sm text-text-dim backdrop-blur hover:border-accent/40 hover:text-text">
+                See an AI meeting
+              </a>
+              <span className="text-xs text-text-mute">
+                · paper-mode default · your keys, your spend
+              </span>
             </div>
           </div>
 
-          {/* Headline + copy. flex-1 so the metrics row settles at the
-              bottom of the viewport. */}
-          <div className="flex flex-1 items-center">
-            <div className="max-w-2xl" data-reveal>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
-                <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
-                The first AI firm with real meetings
-              </div>
-              <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl xl:text-7xl">
-                Trade with a <span className="text-accent">team of AI agents</span> that{" "}
-                <span className="text-bull">meet, review, and rewrite</span> each other.
-              </h1>
-              <p className="mt-5 max-w-xl text-base text-text-dim sm:text-lg">
-                Every other "AI trading" tool is one model in a costume.
-                TradeMaster is a firm: a manager agent, employee traders, a
-                risk officer. They sit down for 1:1 meetings every 4 hours.
-                They write postmortems. They argue. You are the CEO.
-              </p>
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <Link href="/signup"
-                  className="rounded-md bg-bull px-6 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
-                  Start free — no card
-                </Link>
-                <a href="#how"
-                  className="rounded-md border border-border bg-bg-card/40 px-6 py-3 text-sm text-text-dim backdrop-blur hover:border-accent/40 hover:text-text">
-                  See an AI meeting
-                </a>
-                <span className="text-xs text-text-mute">
-                  · paper-mode default · your keys, your spend
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Metric strip — pinned to the bottom of the viewport so it
-              shows above the fold. */}
-          <div data-reveal className="mt-6 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
+          {/* mt-auto pushes the metric strip to the bottom of the
+              viewport so it sits above the fold without enlarging the
+              gap at the top. */}
+          <div data-reveal className="mt-auto grid shrink-0 grid-cols-2 gap-3 pt-10 sm:grid-cols-4">
             {METRICS.map((m) => (
               <div
                 key={m.label}
