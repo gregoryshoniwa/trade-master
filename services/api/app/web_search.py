@@ -63,18 +63,27 @@ async def _load_config(conn, company_id: UUID) -> CompanyWebSearchConfig:
         """
         SELECT web_search_enabled, web_search_allowed_domains,
                web_search_blocked_domains, web_search_daily_quota,
-               web_search_backend
+               web_search_backend, tier_name
         FROM companies WHERE id = $1
         """,
         company_id,
     )
     if row is None:
         return CompanyWebSearchConfig(False, [], [], 0, "auto")
+    # Effective quota = the lesser of {what the CEO set, what the tier
+    # allows}. CEOs can choose to be MORE restrictive than the tier
+    # (to bound spend further) but never more generous.
+    from app.tiers import tier_web_search_quota
+    tier_cap = tier_web_search_quota(row["tier_name"] or "free")
+    quota = min(int(row["web_search_daily_quota"]), tier_cap)
+    # Free tier (quota=0) means the master switch is effectively off
+    # regardless of what the company-level toggle says.
+    enabled = bool(row["web_search_enabled"]) and quota > 0
     return CompanyWebSearchConfig(
-        enabled=bool(row["web_search_enabled"]),
+        enabled=enabled,
         allowed_domains=[d.lower() for d in (row["web_search_allowed_domains"] or [])],
         blocked_domains=[d.lower() for d in (row["web_search_blocked_domains"] or [])],
-        daily_quota=int(row["web_search_daily_quota"]),
+        daily_quota=quota,
         backend=row["web_search_backend"] or "auto",
     )
 

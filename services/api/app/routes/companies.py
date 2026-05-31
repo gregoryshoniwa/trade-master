@@ -25,7 +25,7 @@ async def list_companies(account_id: CurrentAccount):
             """
             SELECT c.id, c.name, c.slug, c.brand_color, c.base_currency,
                    c.paper_mode, c.current_asset_tier, c.unlocked_contract_types,
-                   c.created_at, m.role
+                   c.tier_name, c.created_at, m.role
             FROM companies c
             JOIN company_members m ON m.company_id = c.id
             WHERE m.account_id = $1
@@ -44,6 +44,7 @@ async def list_companies(account_id: CurrentAccount):
                 paper_mode=r["paper_mode"],
                 current_asset_tier=r["current_asset_tier"],
                 unlocked_contract_types=list(r["unlocked_contract_types"]),
+                tier_name=r["tier_name"],
                 role=r["role"],
                 created_at=r["created_at"],
             )
@@ -64,7 +65,7 @@ async def create_company(body: CompanyCreate, account_id: CurrentAccount):
                 VALUES ($1, $2, $3, $4, $4)
                 RETURNING id, name, slug, brand_color, base_currency,
                           paper_mode, current_asset_tier,
-                          unlocked_contract_types, created_at
+                          unlocked_contract_types, tier_name, created_at
                 """,
                 body.name,
                 slug,
@@ -96,6 +97,7 @@ async def create_company(body: CompanyCreate, account_id: CurrentAccount):
         paper_mode=row["paper_mode"],
         current_asset_tier=row["current_asset_tier"],
         unlocked_contract_types=list(row["unlocked_contract_types"]),
+        tier_name=row["tier_name"],
         role="owner",
         created_at=row["created_at"],
     )
@@ -126,8 +128,12 @@ async def set_paper_mode(
         if current is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
 
-        # Going live — require fresh passkey assertion.
+        # Going live — tier gate + fresh passkey assertion. Tier comes
+        # first because it's the cheaper rejection; passkey requires a
+        # cookie + verify dance.
         if current and not body.paper_mode:
+            from app import tiers as _tiers
+            await _tiers.gate_real_trading(company_id)
             from app.routes.passkey import UNLOCK_COOKIE, decode_unlock_jwt
             unlock = request.cookies.get(UNLOCK_COOKIE)
             if not unlock:
@@ -155,7 +161,7 @@ async def set_paper_mode(
             WHERE id = $1
             RETURNING id, name, slug, brand_color, base_currency,
                       paper_mode, current_asset_tier,
-                      unlocked_contract_types, created_at
+                      unlocked_contract_types, tier_name, created_at
             """,
             company_id, body.paper_mode,
         )
@@ -166,7 +172,71 @@ async def set_paper_mode(
         paper_mode=row["paper_mode"],
         current_asset_tier=row["current_asset_tier"],
         unlocked_contract_types=list(row["unlocked_contract_types"]),
+        tier_name=row["tier_name"],
         role=role, created_at=row["created_at"],
+    )
+
+
+class TierStatus(BaseModel):
+    tier_name: str
+    label: str
+    label_color: str
+    limits: dict
+    usage: dict
+
+
+@router.get("/{company_id}/tier", response_model=TierStatus)
+async def get_tier_status(company_id: UUID, account_id: CurrentAccount):
+    """Returns the company's tier + limits + current usage. Limits come
+    from app.tiers; usage is counted live from the DB."""
+    from app.tiers import INF, get_limits, get_tier_name
+    async with acquire() as conn:
+        role = await conn.fetchval(
+            "SELECT role FROM company_members WHERE company_id=$1 AND account_id=$2",
+            company_id, account_id,
+        )
+        if role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "company not found")
+        # Members usage (incl. caller); employee-agent count.
+        users = int(await conn.fetchval(
+            "SELECT count(*) FROM company_members WHERE company_id = $1",
+            company_id,
+        ) or 0)
+        employees = int(await conn.fetchval(
+            "SELECT count(*) FROM agents WHERE company_id = $1 AND role = 'employee'",
+            company_id,
+        ) or 0)
+        web_today = int(await conn.fetchval(
+            """
+            SELECT count(*) FROM web_search_log
+            WHERE company_id = $1
+              AND created_at >= date_trunc('day', now())
+              AND ok
+            """,
+            company_id,
+        ) or 0)
+    name = await get_tier_name(company_id)
+    t = get_limits(name)
+    def _fmt(n: int) -> int | None:
+        return None if n >= INF else n
+    return TierStatus(
+        tier_name=t.name,
+        label=t.label,
+        label_color=t.label_color,
+        limits={
+            "max_users":              _fmt(t.max_users),
+            "max_employees":          _fmt(t.max_employees),
+            "allowed_forecasters":    list(t.allowed_forecasters),
+            "paper_only":             t.paper_only,
+            "voice_minutes_per_month": _fmt(t.voice_minutes_per_month),
+            "web_search_daily_quota": _fmt(t.web_search_daily_quota),
+            "manager_loop":           t.manager_loop,
+        },
+        usage={
+            "users":            users,
+            "employee_agents":  employees,
+            "web_search_today": web_today,
+        },
     )
 
 

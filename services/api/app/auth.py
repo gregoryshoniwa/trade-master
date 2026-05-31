@@ -232,3 +232,29 @@ async def current_account_id(
 
 
 CurrentAccount = Annotated[UUID, Depends(current_account_id)]
+
+
+async def current_company_id(account_id: CurrentAccount) -> UUID:
+    """The caller's most-recently-joined company. Used by endpoints that
+    are conceptually per-tenant but don't take an explicit company in the
+    URL (e.g. live broker balance, statement). When the user belongs to
+    multiple companies, the most-recent one wins — the frontend can move
+    to explicit /companies/{id}/deriv/... paths if it needs to switch."""
+    from app.db import acquire  # local to avoid circular import
+    async with acquire() as conn:
+        cid = await conn.fetchval(
+            """
+            SELECT company_id
+            FROM company_members
+            WHERE account_id = $1
+            ORDER BY joined_at DESC
+            LIMIT 1
+            """,
+            account_id,
+        )
+    if cid is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "no company membership")
+    return cid
+
+
+CurrentCompanyId = Annotated[UUID, Depends(current_company_id)]

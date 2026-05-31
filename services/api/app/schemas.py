@@ -76,6 +76,7 @@ class Company(BaseModel):
     paper_mode: bool
     current_asset_tier: int
     unlocked_contract_types: list[str]
+    tier_name: str  # 'free' | 'starter' | 'pro' | 'enterprise'
     role: str  # this user's role in this company
     created_at: datetime
 
@@ -121,8 +122,32 @@ class InviteCreated(BaseModel):
 
 
 class UpdateMemberRoleRequest(BaseModel):
-    role: str = Field(pattern=r"^(owner|admin|trader|viewer)$")
+    # All optional — only set fields are touched. `full_name` lets an
+    # admin correct a typo in someone's display name without forcing
+    # them to log in and change it themselves.
+    role: str | None = Field(default=None, pattern=r"^(owner|admin|trader|viewer)$")
     title: str | None = Field(default=None, max_length=120)
+    full_name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class CreateMemberRequest(BaseModel):
+    """Admin-create flow. Replaces the email-invite path with direct
+    account creation: the admin enters the user's email + initial
+    password and tells them out-of-band; the user logs in immediately."""
+    email: EmailStr
+    full_name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=10, max_length=200)
+    role: str = Field(pattern=r"^(admin|trader|viewer)$")
+    title: str | None = Field(default=None, max_length=120)
+
+
+class ResetMemberPasswordResponse(BaseModel):
+    """Returned to the admin after a reset. The caller is responsible
+    for communicating the temp password to the user; we never email it.
+    The user can change it themselves once logged in."""
+    account_id: UUID
+    email: EmailStr
+    temp_password: str
 
 
 # ─────────────────────── personalities ──────────────────────

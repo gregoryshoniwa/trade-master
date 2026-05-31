@@ -149,6 +149,14 @@ async def create_agent(
             "pick one from /api/v1/forecasting/models",
         )
 
+    # Tier gates: forecaster allowlist + employee headcount. Manager
+    # and research roles are exempt from the headcount cap so the free
+    # tier still has a working agentic loop (Alpha + Scout).
+    from app import tiers as _tiers
+    await _tiers.gate_forecaster(company_id, body.forecasting_model)
+    if body.role == "employee":
+        await _tiers.gate_add_employee_agent(company_id)
+
     # Apply preset defaults for any fields the caller didn't provide.
     preset_vals = apply_preset(body.personality)
     kelly = body.kelly_fraction if body.kelly_fraction is not None else preset_vals.get("kelly_fraction", 0.25)
@@ -239,6 +247,9 @@ async def update_agent(
             f"unsupported forecasting_model {body.forecasting_model} — "
             "pick one from /api/v1/forecasting/models",
         )
+    if body.forecasting_model is not None:
+        from app import tiers as _tiers
+        await _tiers.gate_forecaster(company_id, body.forecasting_model)
 
     fields = body.model_dump(exclude_none=True)
     if not fields:

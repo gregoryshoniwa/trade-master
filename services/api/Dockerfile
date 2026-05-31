@@ -15,9 +15,18 @@ ENV UV_LINK_MODE=copy \
 
 COPY pyproject.toml uv.lock* ./
 
-# Install runtime deps only (no dev group)
+# Install runtime deps only (no dev group). If the lockfile is stale (e.g.
+# new dep added to pyproject.toml), --frozen would silently succeed on the
+# old set, so we always re-lock when --locked check disagrees with the file.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+    (uv sync --no-dev --frozen 2>/dev/null) \
+    || (uv lock && uv sync --no-dev)
+
+# Belt-and-braces: ensure stripe is in the venv even if the lockfile/sync
+# layer got cached against an older pyproject. Cheap if already installed.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    /app/.venv/bin/python -c "import stripe" 2>/dev/null \
+    || uv pip install --python /app/.venv/bin/python "stripe>=11.0.0"
 
 COPY app ./app
 

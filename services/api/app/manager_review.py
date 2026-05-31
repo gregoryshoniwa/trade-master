@@ -35,7 +35,7 @@ in_meeting_with: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
 )
 
 from app.db import acquire
-from app.llm import LLMMessage, get_adapter
+from app.llm import LLMMessage, get_adapter_for_company
 from app.tools import (
     MANAGER_TOOLS,
     ToolContext,
@@ -247,13 +247,16 @@ MAX_TOOL_ROUNDS_PER_MEETING = 3
 
 
 async def _review_once() -> int:
-    """One pass over every company that has a manager agent."""
+    """One pass over every Pro/Enterprise company that has a manager
+    agent. Free/Starter tiers don't include the manager loop — the
+    SQL filter is the cheapest way to skip them at scale."""
+    from app.tiers import manager_loop_allowed
     async with acquire() as conn:
         managers = await conn.fetch(
             """
             SELECT a.id AS manager_id, a.company_id, a.name AS manager_name,
                    a.llm_provider, a.llm_model, a.system_prompt_addendum,
-                   c.created_by AS owner_account_id
+                   c.created_by AS owner_account_id, c.tier_name
             FROM agents a
             JOIN companies c ON c.id = a.company_id
             WHERE a.role = 'manager' AND a.is_active = TRUE AND a.is_paused = FALSE
@@ -262,12 +265,17 @@ async def _review_once() -> int:
     if not managers:
         return 0
 
-    for m in managers:
+    eligible = [m for m in managers if manager_loop_allowed(m["tier_name"])]
+    skipped = len(managers) - len(eligible)
+    if skipped:
+        log.info("manager review: skipped %d companies on a tier without the loop", skipped)
+
+    for m in eligible:
         try:
             await _review_one_company(m)
         except Exception:
             log.exception("manager review failed for company=%s", m["company_id"])
-    return len(managers)
+    return len(eligible)
 
 
 async def _review_one_company(m) -> None:
@@ -286,7 +294,7 @@ async def _review_one_company(m) -> None:
     model = m["llm_model"]
 
     try:
-        adapter = get_adapter(provider)
+        adapter = await get_adapter_for_company(provider, company_id)
     except Exception as e:
         log.warning("manager %s on %s/%s — adapter unavailable: %s",
                     manager_id, provider, model, e)
@@ -527,7 +535,7 @@ async def _run_one_on_one(m, employee, agenda: str | None) -> None:
     model = m["llm_model"]
 
     try:
-        adapter = get_adapter(provider)
+        adapter = await get_adapter_for_company(provider, company_id)
     except Exception as e:
         log.warning("manager %s on %s/%s — adapter unavailable: %s",
                     manager_id, provider, model, e)
@@ -751,7 +759,7 @@ async def _run_meeting_followup(meeting, ceo_message: str) -> None:
     model = meeting["llm_model"]
 
     try:
-        adapter = get_adapter(provider)
+        adapter = await get_adapter_for_company(provider, company_id)
     except Exception as e:
         log.warning("followup adapter unavailable: %s", e)
         return

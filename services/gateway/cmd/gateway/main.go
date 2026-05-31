@@ -71,130 +71,116 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Order router — authorized Deriv connection that executes approved
-	// intents. Disabled gracefully if DERIV_API_TOKEN is unset.
-	tradeClient := trader.New(trader.Config{
-		WSURL:    cfg.DerivWSURL,
-		AppID:    cfg.DerivAppID,
-		APIToken: cfg.DerivAPIToken,
-	}, logger)
-	go tradeClient.Run(ctx)
-	orderRouter := trader.NewRouter(tradeClient, nc, logger)
+	// Per-company trader pool. Each company that an `trades.approved`
+	// message arrives for gets its own authorized Deriv WebSocket using
+	// that company's token (looked up via deriv.token.req on the api).
+	// We never share a connection across companies — that would let
+	// company A's trade hit company B's broker account.
+	pool := trader.NewPool(
+		trader.DefaultPoolConfig(cfg.DerivWSURL, cfg.DerivAppID),
+		nc, logger,
+	)
+	pool.StartBalancePolling(ctx, 5*time.Second)
+
+	orderRouter := trader.NewRouter(pool, nc, logger)
 	if err := orderRouter.Start(ctx); err != nil {
 		logger.Error("order router failed to start", "err", err)
 		// Non-fatal — ticks + fan-out still work without trading.
 	}
 
-	// NATS request/reply: api sends a `deriv.statement.req` with JSON
-	// {"limit":N,"offset":M}; we call Deriv `statement` and reply with the
-	// JSON-encoded StatementResult. Lets the dashboard show transaction
-	// history without opening its own authorized Deriv connection.
-	_, statementSubErr := nc.Subscribe("deriv.statement.req", func(m *nats.Msg) {
+	// Per-company statement: subject is `deriv.statement.req.<company_id>`.
+	// We extract the company_id from the subject tail (NATS guarantees the
+	// publisher chose it; we just use the relevant client). Returns the
+	// account statement so the dashboard can render transaction history
+	// for that company without opening its own authorized Deriv connection.
+	if _, err := nc.Subscribe("deriv.statement.req.*", func(m *nats.Msg) {
 		var req struct {
 			Limit  int `json:"limit"`
 			Offset int `json:"offset"`
 		}
 		_ = json.Unmarshal(m.Data, &req)
-		reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		defer cancel()
-		if !tradeClient.Ready() {
-			payload, _ := json.Marshal(map[string]any{"error": "trader not ready"})
-			_ = m.Respond(payload)
+		cid := companyFromSubject(m.Subject, "deriv.statement.req.")
+		if cid == "" {
+			respondErr(m, "company_id missing from subject")
 			return
 		}
-		res, err := tradeClient.Statement(reqCtx, req.Limit, req.Offset)
+		reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		defer cancel()
+		client, err := pool.Get(reqCtx, cid)
 		if err != nil {
-			payload, _ := json.Marshal(map[string]any{"error": err.Error()})
-			_ = m.Respond(payload)
+			respondErr(m, "trader unavailable: "+err.Error())
+			return
+		}
+		res, err := client.Statement(reqCtx, req.Limit, req.Offset)
+		if err != nil {
+			respondErr(m, err.Error())
 			return
 		}
 		payload, _ := json.Marshal(res)
 		_ = m.Respond(payload)
-	})
-	if statementSubErr != nil {
-		logger.Warn("deriv.statement.req subscribe failed", "err", statementSubErr)
+	}); err != nil {
+		logger.Warn("deriv.statement.req.* subscribe failed", "err", err)
 	}
 
-	// NATS request/reply: api sends a `deriv.sell.req` with JSON
-	// {"contract_id":<int64>, "price":<float|0>}; we sell on Deriv and
-	// reply with the SellResult JSON (or an "error" key). 0 price = market.
-	// This is the path used by the dashboard's per-position "Close" button.
-	_, sellSubErr := nc.Subscribe("deriv.sell.req", func(m *nats.Msg) {
+	// Per-company manual close: `deriv.sell.req.<company_id>`. Drives the
+	// dashboard's "Close" button on an open position. The api side
+	// already knows which company the intent belongs to, so it publishes
+	// to the right subject; the gateway only needs to use the right
+	// client.
+	if _, err := nc.Subscribe("deriv.sell.req.*", func(m *nats.Msg) {
 		var req struct {
 			ContractID int64   `json:"contract_id"`
 			Price      float64 `json:"price"`
 		}
 		_ = json.Unmarshal(m.Data, &req)
 		if req.ContractID == 0 {
-			payload, _ := json.Marshal(map[string]any{"error": "contract_id required"})
-			_ = m.Respond(payload)
+			respondErr(m, "contract_id required")
+			return
+		}
+		cid := companyFromSubject(m.Subject, "deriv.sell.req.")
+		if cid == "" {
+			respondErr(m, "company_id missing from subject")
 			return
 		}
 		reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 		defer cancel()
-		if !tradeClient.Ready() {
-			payload, _ := json.Marshal(map[string]any{"error": "trader not ready"})
-			_ = m.Respond(payload)
-			return
-		}
-		res, err := tradeClient.Sell(reqCtx, req.ContractID, req.Price)
+		client, err := pool.Get(reqCtx, cid)
 		if err != nil {
-			logger.Warn("sell failed", "contract_id", req.ContractID, "err", err)
-			payload, _ := json.Marshal(map[string]any{"error": err.Error()})
-			_ = m.Respond(payload)
+			respondErr(m, "trader unavailable: "+err.Error())
 			return
 		}
-		logger.Info("sell ok", "contract_id", res.ContractID, "sold_for", res.SoldFor)
+		res, err := client.Sell(reqCtx, req.ContractID, req.Price)
+		if err != nil {
+			logger.Warn("sell failed", "contract_id", req.ContractID, "company", cid, "err", err)
+			respondErr(m, err.Error())
+			return
+		}
+		logger.Info("sell ok", "contract_id", res.ContractID, "company", cid, "sold_for", res.SoldFor)
 		payload, _ := json.Marshal(res)
 		_ = m.Respond(payload)
-	})
-	if sellSubErr != nil {
-		logger.Warn("deriv.sell.req subscribe failed", "err", sellSubErr)
+	}); err != nil {
+		logger.Warn("deriv.sell.req.* subscribe failed", "err", err)
 	}
 
-	// Live balance fan-out: poll `balance` every 5s on the authorized
-	// session and republish to NATS. We tried a push subscription first,
-	// but Deriv's balance push goes silent after a socket reconnect (the
-	// new connection has no active subscription and resubscribing
-	// requires reconnect-detection plumbing). A one-shot poll every 5s is
-	// boring, robust, and a 0.2 RPS load on the broker.
-	publishBalance := func(b trader.BalanceUpdate) {
-		payload, _ := json.Marshal(b)
-		_ = nc.Publish("deriv.balance", payload)
+	// On-demand warm: `deriv.warm.<company_id>` — fire-and-forget signal
+	// from the api telling us this company just configured a token and
+	// the dashboard wants its balance ASAP. Without this, balance only
+	// appears after the company places its first trade.
+	if _, err := nc.Subscribe("deriv.warm.*", func(m *nats.Msg) {
+		cid := companyFromSubject(m.Subject, "deriv.warm.")
+		if cid == "" {
+			return
+		}
+		warmCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if _, err := pool.Get(warmCtx, cid); err != nil {
+			logger.Warn("warm failed", "company", cid, "err", err)
+			return
+		}
+		logger.Info("client warmed", "company", cid)
+	}); err != nil {
+		logger.Warn("deriv.warm.* subscribe failed", "err", err)
 	}
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		// Best-effort first publish from the authorize snapshot so the
-		// dashboard isn't empty for the first 5s after boot.
-		if snap, ok := tradeClient.LastAuthorize(); ok {
-			publishBalance(snap)
-		}
-		consecutiveFails := 0
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if !tradeClient.Ready() {
-					continue
-				}
-				reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-				b, err := tradeClient.GetBalance(reqCtx)
-				cancel()
-				if err != nil {
-					consecutiveFails++
-					// Log sparsely so a temporary outage doesn't spam.
-					if consecutiveFails == 1 || consecutiveFails%12 == 0 {
-						logger.Warn("balance poll failed", "err", err, "consecutive", consecutiveFails)
-					}
-					continue
-				}
-				consecutiveFails = 0
-				publishBalance(b)
-			}
-		}
-	}()
 
 	// Deriv subscriber — publishes received ticks to NATS.
 	symbols := splitCSV(cfg.DefaultSymbol)
@@ -257,6 +243,21 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 
 	logger.Info("gateway stopped")
+}
+
+// companyFromSubject extracts the company_id segment from a NATS subject
+// like "deriv.sell.req.<uuid>" given the prefix. Returns "" if the
+// subject doesn't match the expected shape.
+func companyFromSubject(subject, prefix string) string {
+	if !strings.HasPrefix(subject, prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(subject, prefix)
+}
+
+func respondErr(m *nats.Msg, msg string) {
+	payload, _ := json.Marshal(map[string]any{"error": msg})
+	_ = m.Respond(payload)
 }
 
 func splitCSV(s string) []string {

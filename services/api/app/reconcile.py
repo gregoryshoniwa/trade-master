@@ -101,43 +101,58 @@ async def _reconcile_once() -> int:
         log.debug("reconcile: no nats connection")
         return 0
 
-    # 2. Walk Deriv statement pages newest-first, indexing sells by
-    #    contract_id, until we've matched every open intent, hit the page
-    #    cap, or walked past the oldest unclosed intent's executed_at
-    #    (anything older has no possible match). The cutoff is the cheap
-    #    termination criterion — without it, a single yesterday-stuck
-    #    intent would force a 25k-row scan every minute forever.
-    oldest_executed = min(r["executed_at"] for r in rows if r["executed_at"]) if any(r["executed_at"] for r in rows) else None
-    cutoff_ts = (oldest_executed.timestamp() - 60) if oldest_executed else 0
-    open_contract_ids = {str(r["broker_contract_id"]) for r in rows}
+    # 2. Walk Deriv statement pages newest-first, per-company, indexing
+    #    sells by contract_id until we've matched every open intent for
+    #    that company. Each company has its own authorized Deriv session
+    #    on the gateway — so a single global statement scan no longer
+    #    works; one customer can't see another's transactions.
+    #
+    #    The cutoff is the cheap termination criterion — without it, a
+    #    single yesterday-stuck intent would force a 25k-row scan every
+    #    minute forever.
+    by_company: dict[str, list[Any]] = {}
+    for r in rows:
+        by_company.setdefault(str(r["company_id"]), []).append(r)
+
     sells_by_contract: dict[str, dict[str, Any]] = {}
-    for page in range(_MAX_PAGES):
-        if not open_contract_ids:
-            break
-        payload = json.dumps({
-            "limit": _STATEMENT_PAGE, "offset": page * _STATEMENT_PAGE,
-        }).encode()
-        try:
-            reply = await nc.request("deriv.statement.req", payload, timeout=30)
-        except asyncio.TimeoutError:
-            log.warning("reconcile: statement RPC timed out at page %s", page)
-            break
-        statement = json.loads(reply.data)
-        if "error" in statement:
-            log.warning("reconcile: statement err at page %s: %s", page, statement["error"])
-            break
-        txs = statement.get("transactions") or []
-        if not txs:
-            break
-        page_oldest_ts = txs[-1].get("transaction_time") or 0
-        for t in txs:
-            if t.get("action_type") == "sell" and t.get("contract_id"):
-                cid = str(t["contract_id"])
-                if cid in open_contract_ids:
-                    sells_by_contract[cid] = t
-                    open_contract_ids.discard(cid)
-        if cutoff_ts and page_oldest_ts and page_oldest_ts < cutoff_ts:
-            break
+    for company_id, company_rows in by_company.items():
+        oldest_executed = (
+            min(r["executed_at"] for r in company_rows if r["executed_at"])
+            if any(r["executed_at"] for r in company_rows) else None
+        )
+        cutoff_ts = (oldest_executed.timestamp() - 60) if oldest_executed else 0
+        open_contract_ids = {str(r["broker_contract_id"]) for r in company_rows}
+        subject = f"deriv.statement.req.{company_id}"
+        for page in range(_MAX_PAGES):
+            if not open_contract_ids:
+                break
+            payload = json.dumps({
+                "limit": _STATEMENT_PAGE, "offset": page * _STATEMENT_PAGE,
+            }).encode()
+            try:
+                reply = await nc.request(subject, payload, timeout=30)
+            except asyncio.TimeoutError:
+                log.warning("reconcile: statement RPC timed out company=%s page=%s", company_id, page)
+                break
+            statement = json.loads(reply.data)
+            if "error" in statement:
+                # Don't escalate on "no token" — that's expected for companies
+                # that haven't onboarded their broker yet. Log + skip.
+                log.debug("reconcile: statement err company=%s page=%s: %s",
+                          company_id, page, statement["error"])
+                break
+            txs = statement.get("transactions") or []
+            if not txs:
+                break
+            page_oldest_ts = txs[-1].get("transaction_time") or 0
+            for t in txs:
+                if t.get("action_type") == "sell" and t.get("contract_id"):
+                    cid = str(t["contract_id"])
+                    if cid in open_contract_ids:
+                        sells_by_contract[cid] = t
+                        open_contract_ids.discard(cid)
+            if cutoff_ts and page_oldest_ts and page_oldest_ts < cutoff_ts:
+                break
     if not sells_by_contract:
         return 0
 

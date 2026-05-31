@@ -56,15 +56,20 @@ type ClosedEvent struct {
 	Status      string  `json:"status"`
 }
 
-// Router consumes trades.approved.> and drives the trader.
+// Router consumes trades.approved.> and drives a per-company trader.
+//
+// The pool owns the one-Client-per-company lifecycle; the router only
+// asks for the right client given the intent's company_id and forwards
+// the buy. This means a customer trading via their own Deriv token can
+// only ever submit orders to their own account.
 type Router struct {
-	client *Client
+	pool   *Pool
 	nc     *nats.Conn
 	logger *slog.Logger
 }
 
-func NewRouter(client *Client, nc *nats.Conn, logger *slog.Logger) *Router {
-	return &Router{client: client, nc: nc, logger: logger}
+func NewRouter(pool *Pool, nc *nats.Conn, logger *slog.Logger) *Router {
+	return &Router{pool: pool, nc: nc, logger: logger}
 }
 
 func (r *Router) Start(ctx context.Context) error {
@@ -125,12 +130,25 @@ func (r *Router) handleApproved(ctx context.Context, data []byte) {
 	buyCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 
+	client, err := r.pool.Get(buyCtx, intent.CompanyID)
+	if err != nil {
+		r.logger.Warn("no trader for company", "company", intent.CompanyID, "intent", intent.IntentID, "err", err)
+		r.publishExecuted(ExecutedEvent{
+			IntentID:   intent.IntentID,
+			ClientUUID: intent.ClientUUID,
+			CompanyID:  intent.CompanyID,
+			OK:         false,
+			Error:      "trader unavailable: " + err.Error(),
+		})
+		return
+	}
+
 	if pj, jerr := json.Marshal(params); jerr == nil {
-		r.logger.Info("submitting buy", "intent", intent.IntentID, "params", string(pj))
+		r.logger.Info("submitting buy", "intent", intent.IntentID, "company", intent.CompanyID, "params", string(pj))
 	}
 
 	// For stake basis, max price = stake (we never pay more than we stake).
-	res, err := r.client.Buy(buyCtx, params, stake)
+	res, err := client.Buy(buyCtx, params, stake)
 	if err != nil {
 		r.logger.Warn("buy failed", "intent", intent.IntentID, "asset", intent.Asset, "err", err)
 		r.publishExecuted(ExecutedEvent{
@@ -161,7 +179,7 @@ func (r *Router) handleApproved(ctx context.Context, data []byte) {
 	// timeout) — multipliers can stay open indefinitely.
 	intentID := intent.IntentID
 	companyID := intent.CompanyID
-	_ = r.client.TrackContract(ctx, res.ContractID, func(u ContractUpdate) {
+	_ = client.TrackContract(ctx, res.ContractID, func(u ContractUpdate) {
 		if !u.IsSold {
 			return
 		}

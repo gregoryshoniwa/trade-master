@@ -10,6 +10,7 @@ from app import (
     bus,
     calibration,
     deriv as deriv_state,
+    deriv_token_svc,
     execution,
     manager_review,
     personality,
@@ -26,12 +27,14 @@ from app.routes import activity as activity_routes
 from app.routes import agents as agents_routes
 from app.routes import approvals as approvals_routes
 from app.routes import attribution as attribution_routes
+from app.routes import billing as billing_routes
 from app.routes import backtests as backtests_routes
 from app.routes import auth as auth_routes
 from app.routes import calendar as calendar_routes
 from app.routes import calibration as calibration_routes
 from app.routes import chat as chat_routes
 from app.routes import companies as companies_routes
+from app.routes import credentials as credentials_routes
 from app.routes import deriv as deriv_routes
 from app.routes import edge as edge_routes
 from app.routes import employee_requests as employee_requests_routes
@@ -72,6 +75,7 @@ async def lifespan(_: FastAPI):
     # failed so the UI doesn't show stuck-forever rows.
     await backtests_routes.reap_orphans()
     await deriv_state.start()
+    await deriv_token_svc.start()
     await start_calendar()
     await safety.start()
     await sweep.start()
@@ -87,6 +91,7 @@ async def lifespan(_: FastAPI):
         await sweep.stop()
         await safety.stop()
         await stop_calendar()
+        await deriv_token_svc.stop()
         await deriv_state.stop()
         await reconcile.stop()
         await execution.stop()
@@ -123,6 +128,7 @@ app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(passkey_routes.router, prefix="/api/v1")
 app.include_router(me_routes.router, prefix="/api/v1")
 app.include_router(companies_routes.router, prefix="/api/v1")
+app.include_router(credentials_routes.router, prefix="/api/v1")
 app.include_router(agents_routes.router, prefix="/api/v1")
 app.include_router(agents_routes.personality_router, prefix="/api/v1")
 app.include_router(symbols_routes.router, prefix="/api/v1")
@@ -143,6 +149,10 @@ app.include_router(notifications_routes.router, prefix="/api/v1")
 app.include_router(calendar_routes.router, prefix="/api/v1")
 app.include_router(safety_routes.router, prefix="/api/v1")
 app.include_router(attribution_routes.router, prefix="/api/v1")
+app.include_router(billing_routes.router, prefix="/api/v1")
+# Stripe POSTs webhook events to /webhooks/stripe (no /api/v1 — Stripe
+# config requires a stable absolute path, and /api/v1 is an internal prefix).
+app.include_router(billing_routes.webhook_router)
 app.include_router(backtests_routes.router, prefix="/api/v1")
 app.include_router(deriv_routes.router, prefix="/api/v1")
 app.include_router(edge_routes.router, prefix="/api/v1")

@@ -24,6 +24,10 @@ dependencies = [
     "sentence-transformers>=3.3.0",
     # WebAuthn — passkey gate for paper → live trade-mode flip (PLAN Phase 7)
     "webauthn>=2.5.0",
+    # Symmetric encryption (Fernet) for per-company credentials at rest
+    "cryptography>=44.0.0",
+    # Stripe billing — checkout + customer portal + webhooks
+    "stripe>=11.0.0",
 ]
 
 [dependency-groups]

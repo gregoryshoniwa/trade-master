@@ -114,6 +114,15 @@ services:
       QUESTDB_HTTP_URL: http://questdb:9000
       AUTH_SECRET: ${AUTH_SECRET:-dev_change_me_to_a_long_random_string}
       JWT_ISSUER: ${JWT_ISSUER:-trademaster-local}
+      # Fernet key for per-company credentials at rest (Deriv + LLM keys).
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-dev_change_me_dev_change_me_dev_change_me=}
+      # Stripe billing (Phase 4). Leave blank in dev — pricing CTAs
+      # fall through to signup links and the webhook returns 503.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_STARTER: ${STRIPE_PRICE_STARTER:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_BILLING_RETURN_URL: ${STRIPE_BILLING_RETURN_URL:-http://localhost:3000/settings}
       CORS_ORIGINS: "http://localhost:3000"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

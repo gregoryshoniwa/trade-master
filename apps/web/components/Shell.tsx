@@ -12,9 +12,20 @@ import { useAuth } from "@/lib/auth";
 // empty dashboard with a form floating in the middle.
 const AUTH_ROUTES = ["/login", "/signup"];
 
+// Public marketing routes — visible without login. We don't redirect to
+// /login when the visitor is logged out on these; they're the front door
+// for new customers. The dashboard at `/` is also a marketing landing
+// when there's no session (the page component branches on `me`).
+const PUBLIC_ROUTES = ["/", "/pricing"];
+
 function isAuthRoute(pathname: string | null): boolean {
   if (!pathname) return false;
   return AUTH_ROUTES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+function isPublicRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return PUBLIC_ROUTES.some((p) => pathname === p);
 }
 
 /** App shell: persistent left sidebar (desktop) + slim top bar + scrollable
@@ -34,6 +45,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const authRoute = isAuthRoute(pathname);
+  const publicRoute = isPublicRoute(pathname);
 
   // Close the mobile drawer on route change.
   useEffect(() => {
@@ -41,20 +53,28 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   // Redirect dance:
-  //   - logged out + protected route → /login
-  //   - logged in  + auth route       → /
-  // Single source of truth so individual pages don't sprinkle their own.
+  //   - logged out + non-public/non-auth route → /login
+  //   - logged in  + auth route                → /
+  // Public routes (landing, pricing) are accessible in both states; their
+  // page components branch internally on `me`.
   useEffect(() => {
     if (loading) return;
-    if (!me && !authRoute) {
+    if (!me && !authRoute && !publicRoute) {
       router.replace("/login");
     } else if (me && authRoute) {
       router.replace("/");
     }
-  }, [loading, me, authRoute, router]);
+  }, [loading, me, authRoute, publicRoute, router]);
 
   // Full-bleed auth layout — no sidebar, no topbar, no padding from us.
   if (authRoute) {
+    return <main className="h-screen overflow-y-auto bg-bg">{children}</main>;
+  }
+
+  // Public routes for logged-out visitors render full-bleed too — the
+  // landing page is its own visual world and shouldn't be wrapped in the
+  // app chrome that screams "internal tool."
+  if (!loading && !me && publicRoute) {
     return <main className="h-screen overflow-y-auto bg-bg">{children}</main>;
   }
 

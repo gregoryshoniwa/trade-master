@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app import bus
 from app import deriv as deriv_cache
-from app.auth import CurrentAccount
+from app.auth import CurrentCompanyId
 
 router = APIRouter(prefix="/deriv", tags=["deriv"])
 
@@ -41,9 +41,13 @@ class Statement(BaseModel):
 
 
 @router.get("/balance", response_model=Balance)
-async def get_balance(account_id: CurrentAccount):
-    _ = account_id  # auth gate — balance is global Phase-1 state
-    state = deriv_cache.latest()
+async def get_balance(company_id: CurrentCompanyId):
+    """Latest broker balance for the caller's active company. Populated
+    by `deriv.balance.{company_id}` pushes from the gateway; returns
+    `available=false` until the gateway has placed the first poll for
+    this company (which happens after the company's token is configured
+    and the pool warms up)."""
+    state = deriv_cache.latest(company_id)
     if state is None:
         return Balance(available=False)
     return Balance(
@@ -57,20 +61,21 @@ async def get_balance(account_id: CurrentAccount):
 
 @router.get("/statement", response_model=Statement)
 async def get_statement(
-    account_id: CurrentAccount,
+    company_id: CurrentCompanyId,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
 ):
-    """Authoritative broker-side transaction history. Routed via NATS to the
-    gateway (which holds the authorized Deriv session) — request/reply so the
+    """Authoritative broker-side transaction history for the caller's
+    active company. Routed via NATS to the gateway (which holds the
+    authorized Deriv session for that company) — request/reply so the
     api doesn't need its own Deriv connection."""
-    _ = account_id
     nc = bus.nc()
     if nc is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "nats unavailable")
     req = json.dumps({"limit": limit, "offset": offset}).encode()
+    subject = f"deriv.statement.req.{company_id}"
     try:
-        resp = await nc.request("deriv.statement.req", req, timeout=25.0)
+        resp = await nc.request(subject, req, timeout=25.0)
     except Exception as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"gateway request failed: {e}") from e
     try:

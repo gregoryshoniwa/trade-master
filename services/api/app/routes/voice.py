@@ -197,7 +197,17 @@ async def mint_voice_session(
     can't be requested with the same token because they're locked into the
     `live_connect_constraints`. The browser then connects to Gemini WSS
     directly using `access_token=<token>`."""
-    if not os.getenv("GEMINI_API_KEY"):
+    # Tier gate first — Free has voice disabled entirely; Starter/Pro
+    # have monthly minute caps (per-minute tracking is deferred to a
+    # later turn). Then prefer the customer's own Gemini key when
+    # configured; system env is the fallback. Voice burns real Gemini
+    # Live minutes so high-usage customers should bill against their
+    # own quota rather than the system owner's.
+    from app import credentials as _creds
+    from app import tiers as _tiers
+    await _tiers.gate_voice(company_id)
+    gemini_key = await _creds.get_llm_key(company_id, "gemini")
+    if not gemini_key:
         # Surface unavailable cleanly so the modal can show a real message.
         return VoiceSessionOut(
             available=False, session_id=uuid.uuid4().hex,
@@ -237,7 +247,7 @@ async def mint_voice_session(
 
     now = dt.datetime.now(tz=dt.timezone.utc)
     client = genai.Client(
-        api_key=os.environ["GEMINI_API_KEY"],
+        api_key=gemini_key,
         http_options={"api_version": "v1alpha"},
     )
     try:

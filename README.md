@@ -216,6 +216,40 @@ live tick + forecast stream.
 - **Symbol icons everywhere** — `frxEURUSD` renders as 🇪🇺🇺🇸 in the
   picker, postmortems, history, agents rail, and inline in any meeting
   transcript that mentions an asset by code.
+- **TSFM ensemble forecaster** — hosted Chronos-2 + Moirai-2 via the
+  unified TSFM.ai API as a third forecasting service. Multivariate
+  attention captures cross-pair correlations TTM and Kronos miss
+  entirely. Backtests over the same `POST /backtest` endpoint as the
+  local services; concurrency-bounded so a sweep doesn't burst-bill.
+- **Public landing + pricing page** — logged-out visitors hit a
+  marketing site at `/` with feature highlights, honest limits, and
+  a four-tier pricing table (Free / Starter / Pro / Enterprise). Logged
+  in users still see the dashboard at the same route.
+- **Per-company API keys** (`/settings`) — customers paste their own
+  Deriv demo/real tokens + Anthropic / Gemini / OpenAI / OpenRouter /
+  Groq keys. Stored Fernet-encrypted with a master key from env. The
+  runtime LLM dispatch prefers the customer's key, falls through to
+  platform env if unset. Voice mints against the customer's Gemini key.
+  Deriv environment toggle (demo/real) with a 🔴 warning on real.
+- **Direct member CRUD + password reset** — owner/admin creates a user
+  with an initial password (with a "generate" button using an
+  unambiguous alphabet), inline rename, and a Reset password button
+  per row that returns a temp password in a copyable banner. The old
+  invite-link flow is hidden in the UI but remains functional for any
+  in-flight links.
+- **Tier enforcement** — `app.tiers` is the single source of truth.
+  Gates fire at agent CRUD (forecaster + employee count), member CRUD
+  (seat cap), voice session mint, real-trading toggle, manager review
+  loop, and web search quota. Each gate raises HTTP 402 with a
+  structured payload the UI shows in-context. Settings page surfaces
+  current tier + live usage bars.
+- **Stripe billing** (Phase 4) — checkout sessions for Starter/Pro,
+  customer portal for cancellation + invoices, webhook handler that
+  flips `companies.tier_name` on `customer.subscription.*` events.
+  Pricing CTAs become live checkout when the visitor is signed in;
+  Settings page shows subscription status with a Manage subscription
+  link. Operator can leave Stripe env unset to disable billing — the
+  api still works (pricing CTAs fall through to signup).
 
 ---
 

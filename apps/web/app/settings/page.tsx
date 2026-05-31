@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { api, ApiError, type CompanyGoals, type WebSearchConfig } from "@/lib/api";
+import {
+  api, ApiError,
+  type BillingStatus, type CompanyGoals, type CredentialsStatus,
+  type TierStatus, type WebSearchConfig,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 export default function SettingsPage() {
@@ -30,9 +34,275 @@ export default function SettingsPage() {
           AI tool configuration. Bind agents tightly enough that they don't waste budget; loosely enough that they can actually help.
         </p>
       </header>
+      <TierSection companyId={activeCompanyId} />
+      <BillingSection companyId={activeCompanyId} />
       <CompanyGoalsSection companyId={activeCompanyId} />
+      <DerivSection companyId={activeCompanyId} />
+      <AIProvidersSection companyId={activeCompanyId} />
       <WebSearchSection companyId={activeCompanyId} />
     </main>
+  );
+}
+
+function DerivSection({ companyId }: { companyId: string }) {
+  const [status, setStatus] = useState<CredentialsStatus | null>(null);
+  const [demo, setDemo] = useState("");
+  const [real, setReal] = useState("");
+  const [env, setEnv] = useState<"demo" | "real">("demo");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await api.getCredentials(companyId);
+      setStatus(s);
+      setEnv(s.deriv_environment);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "load failed");
+    }
+  }, [companyId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true); setError(null); setDone(null);
+    try {
+      const body: Record<string, string> = { deriv_environment: env };
+      if (demo) body.deriv_token_demo = demo;
+      if (real) body.deriv_token_real = real;
+      const next = await api.updateCredentials(companyId, body);
+      setStatus(next); setEnv(next.deriv_environment);
+      setDemo(""); setReal("");
+      setDone("Saved");
+      setTimeout(() => setDone(null), 4000);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearKey(kind: "demo" | "real") {
+    if (!confirm(`Clear the ${kind} Deriv token?`)) return;
+    setBusy(true); setError(null);
+    try {
+      const next = await api.updateCredentials(companyId, {
+        [kind === "demo" ? "deriv_token_demo" : "deriv_token_real"]: "",
+      });
+      setStatus(next);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "clear failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-border bg-bg-card p-5 space-y-4">
+      <header>
+        <h2 className="text-sm font-medium">Deriv integration</h2>
+        <p className="mt-1 text-xs text-text-mute">
+          Connect your own Deriv account. Demo tokens come from{" "}
+          <a href="https://app.deriv.com/account/api-token" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">app.deriv.com/account/api-token</a>{" "}
+          (create with at least Read + Trade scopes). Real tokens enable
+          live money — paper mode + WebAuthn passkey gate still apply.
+        </p>
+      </header>
+
+      <div className="flex items-baseline gap-3 text-sm">
+        <span className="text-text-mute">Active environment:</span>
+        <div className="flex gap-1 rounded-md border border-border bg-bg-elev-1 p-1 text-xs">
+          {(["demo", "real"] as const).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setEnv(opt)}
+              className={`rounded px-3 py-1 ${env === opt ? (opt === "real" ? "bg-bear text-white" : "bg-accent text-white") : "text-text-mute hover:text-text"}`}
+            >
+              {opt === "demo" ? "Demo" : "Real"}
+            </button>
+          ))}
+        </div>
+        {env === "real" && (
+          <span className="text-xs text-bear">⚠ Real money</span>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Demo token"
+          hint={status?.deriv_demo_configured ? "Configured. Paste a new one to replace." : "Not configured."}
+        >
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={demo}
+              onChange={(e) => setDemo(e.target.value)}
+              placeholder={status?.deriv_demo_configured ? "•••••••• (paste to replace)" : "paste demo token"}
+              className={inputCls}
+            />
+            {status?.deriv_demo_configured && (
+              <button type="button" onClick={() => clearKey("demo")}
+                className="text-xs text-bear hover:underline disabled:opacity-50" disabled={busy}>
+                Clear
+              </button>
+            )}
+          </div>
+        </Field>
+        <Field
+          label="Real token"
+          hint={status?.deriv_real_configured ? "Configured. Paste a new one to replace." : "Not configured (paper-mode is fine without one)."}
+        >
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={real}
+              onChange={(e) => setReal(e.target.value)}
+              placeholder={status?.deriv_real_configured ? "•••••••• (paste to replace)" : "paste real token"}
+              className={inputCls}
+            />
+            {status?.deriv_real_configured && (
+              <button type="button" onClick={() => clearKey("real")}
+                className="text-xs text-bear hover:underline disabled:opacity-50" disabled={busy}>
+                Clear
+              </button>
+            )}
+          </div>
+        </Field>
+      </div>
+
+      <div className="flex items-center justify-end gap-3">
+        {error && <span className="text-xs text-bear">{error}</span>}
+        {done && <span className="text-xs text-bull">{done}</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy}
+          className="rounded-md bg-bull px-3 py-1.5 text-sm font-medium text-bg hover:opacity-90 disabled:opacity-40"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function AIProvidersSection({ companyId }: { companyId: string }) {
+  const [status, setStatus] = useState<CredentialsStatus | null>(null);
+  const [keys, setKeys] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try { setStatus(await api.getCredentials(companyId)); }
+    catch (e) { setError(e instanceof ApiError ? e.message : "load failed"); }
+  }, [companyId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const PROVIDERS = [
+    { key: "anthropic_api_key", flag: "anthropic_configured", label: "Anthropic (Claude)", link: "https://console.anthropic.com/settings/keys" },
+    { key: "gemini_api_key",    flag: "gemini_configured",    label: "Google Gemini (text + voice)", link: "https://aistudio.google.com/app/apikey" },
+    { key: "openai_api_key",    flag: "openai_configured",    label: "OpenAI", link: "https://platform.openai.com/api-keys" },
+    { key: "openrouter_api_key", flag: "openrouter_configured", label: "OpenRouter (DeepSeek / Llama / etc.)", link: "https://openrouter.ai/keys" },
+    { key: "groq_api_key",      flag: "groq_configured",      label: "Groq", link: "https://console.groq.com/keys" },
+  ] as const;
+
+  async function save() {
+    const payload: Record<string, string> = {};
+    for (const [k, v] of Object.entries(keys)) {
+      if (v.trim()) payload[k] = v.trim();
+    }
+    if (Object.keys(payload).length === 0) {
+      setError("nothing to save"); return;
+    }
+    setBusy(true); setError(null); setDone(null);
+    try {
+      const next = await api.updateCredentials(companyId, payload);
+      setStatus(next);
+      setKeys({});
+      setDone("Saved");
+      setTimeout(() => setDone(null), 4000);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearProvider(field: string) {
+    if (!confirm(`Clear this key?`)) return;
+    setBusy(true); setError(null);
+    try {
+      setStatus(await api.updateCredentials(companyId, { [field]: "" }));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "clear failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-border bg-bg-card p-5 space-y-4">
+      <header>
+        <h2 className="text-sm font-medium">AI provider keys</h2>
+        <p className="mt-1 text-xs text-text-mute">
+          Bring-your-own keys. When set, your agents bill against your own
+          quotas instead of the platform's. Leave blank and we'll use the
+          platform's keys (subject to your tier's usage limits).
+        </p>
+      </header>
+      <ul className="space-y-3">
+        {PROVIDERS.map((p) => {
+          const configured = !!(status as unknown as Record<string, boolean>)?.[p.flag];
+          return (
+            <li key={p.key} className="grid items-baseline gap-2 sm:grid-cols-[12rem_1fr_auto]">
+              <div>
+                <div className="text-xs font-medium">{p.label}</div>
+                <a href={p.link} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-accent hover:underline">
+                  Get key →
+                </a>
+              </div>
+              <input
+                type="password"
+                value={keys[p.key] ?? ""}
+                onChange={(e) => setKeys({ ...keys, [p.key]: e.target.value })}
+                placeholder={configured ? "•••••••• (paste to replace)" : "paste key"}
+                className={inputCls}
+              />
+              <div className="flex items-center gap-2 text-xs">
+                {configured ? (
+                  <>
+                    <span className="text-bull">✓ Set</span>
+                    <button type="button" onClick={() => clearProvider(p.key)}
+                      className="text-bear hover:underline disabled:opacity-50" disabled={busy}>
+                      Clear
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-text-mute">Not set</span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="flex items-center justify-end gap-3">
+        {error && <span className="text-xs text-bear">{error}</span>}
+        {done && <span className="text-xs text-bull">{done}</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy || Object.values(keys).every((v) => !v.trim())}
+          className="rounded-md bg-bull px-3 py-1.5 text-sm font-medium text-bg hover:opacity-90 disabled:opacity-40"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -283,6 +553,275 @@ function WebSearchSection({ companyId }: { companyId: string }) {
         </div>
       )}
     </section>
+  );
+}
+
+function BillingSection({ companyId }: { companyId: string }) {
+  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [busy, setBusy] = useState<"starter" | "pro" | "portal" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getBillingStatus(companyId).then(setStatus)
+      .catch((e) => setErr(e instanceof ApiError ? e.message : "load failed"));
+  }, [companyId]);
+
+  // Show a one-shot banner if the user just came back from a checkout.
+  const [banner, setBanner] = useState<"success" | "cancel" | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("billing");
+    if (v === "success" || v === "cancel") {
+      setBanner(v);
+      // Strip the param so a refresh doesn't show it again.
+      params.delete("billing");
+      const q = params.toString();
+      window.history.replaceState({}, "",
+        window.location.pathname + (q ? `?${q}` : ""));
+    }
+  }, []);
+
+  async function checkout(tier: "starter" | "pro") {
+    setBusy(tier); setErr(null);
+    try {
+      const { url } = await api.startCheckout(companyId, tier);
+      window.location.href = url;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "checkout failed");
+      setBusy(null);
+    }
+  }
+
+  async function portal() {
+    setBusy("portal"); setErr(null);
+    try {
+      const { url } = await api.openBillingPortal(companyId);
+      window.location.href = url;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "portal open failed");
+      setBusy(null);
+    }
+  }
+
+  if (status && !status.enabled) {
+    // Billing isn't configured on this api instance. Show a hint for
+    // operators rather than a confusing empty card.
+    return (
+      <section className="rounded-2xl border border-border bg-bg-card p-5 text-xs text-text-mute">
+        Billing isn't configured on this instance.{" "}
+        <span className="num">STRIPE_SECRET_KEY</span> is unset on the api —
+        the operator runs the platform under self-hosted control.
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-2xl border border-border bg-bg-card p-5 space-y-4">
+      <header>
+        <h2 className="text-sm font-medium">Billing</h2>
+        <p className="mt-1 text-xs text-text-mute">
+          Manage your subscription via Stripe. Cancellation, invoice history,
+          and payment-method updates happen in the customer portal.
+        </p>
+      </header>
+
+      {banner === "success" && (
+        <div className="rounded-md border border-bull/40 bg-bull-soft p-3 text-xs text-bull">
+          ✓ Checkout completed. Your tier will update within a few seconds
+          when Stripe confirms the subscription.
+        </div>
+      )}
+      {banner === "cancel" && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+          Checkout cancelled. No charge has been made.
+        </div>
+      )}
+
+      <div className="grid gap-2 text-xs">
+        <FeatureRow label="Customer ID">
+          {status?.has_customer ? (
+            <span className="text-bull">✓ linked</span>
+          ) : (
+            <span className="text-text-mute">not yet — start a checkout to create one</span>
+          )}
+        </FeatureRow>
+        <FeatureRow label="Subscription status">
+          <span className={
+            status?.subscription_status === "active" ? "text-bull"
+            : status?.subscription_status == null ? "text-text-mute"
+            : "text-warning"
+          }>
+            {status?.subscription_status ?? "no active subscription"}
+          </span>
+        </FeatureRow>
+        {status?.current_period_end && (
+          <FeatureRow label="Renews / ends">
+            <span className="num">{new Date(status.current_period_end).toLocaleDateString()}</span>
+          </FeatureRow>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {err && <span className="text-xs text-bear">{err}</span>}
+        {status?.portal_available && (
+          <button
+            type="button"
+            onClick={portal}
+            disabled={busy !== null}
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-40"
+          >
+            {busy === "portal" ? "Opening…" : "Manage subscription →"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => checkout("starter")}
+          disabled={busy !== null}
+          className="rounded-md border border-accent/40 px-3 py-1.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
+        >
+          {busy === "starter" ? "Loading…" : "Upgrade to Starter"}
+        </button>
+        <button
+          type="button"
+          onClick={() => checkout("pro")}
+          disabled={busy !== null}
+          className="rounded-md bg-bull px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-40"
+        >
+          {busy === "pro" ? "Loading…" : "Upgrade to Pro"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function TierSection({ companyId }: { companyId: string }) {
+  const [tier, setTier] = useState<TierStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    api.getTierStatus(companyId).then(setTier)
+      .catch((e) => setErr(e instanceof ApiError ? e.message : "load failed"));
+  }, [companyId]);
+
+  if (err) return <div className="text-xs text-text-mute">Tier: {err}</div>;
+  if (!tier) return null;
+
+  const isFree = tier.tier_name === "free";
+  const limits = tier.limits;
+  const usage = tier.usage;
+  const userPct = limits.max_users != null && limits.max_users > 0
+    ? Math.min(100, (usage.users / limits.max_users) * 100) : 0;
+  const empPct = limits.max_employees != null && limits.max_employees > 0
+    ? Math.min(100, (usage.employee_agents / limits.max_employees) * 100) : 0;
+  const webPct = limits.web_search_daily_quota != null && limits.web_search_daily_quota > 0
+    ? Math.min(100, (usage.web_search_today / limits.web_search_daily_quota) * 100) : 0;
+
+  return (
+    <section className="rounded-2xl border border-border bg-bg-card p-5 space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-sm font-medium">Subscription</h2>
+          <span className={`rounded-full bg-bg-elev-2 px-3 py-1 text-[10px] uppercase tracking-widest ${tier.label_color}`}>
+            {tier.label}
+          </span>
+        </div>
+        <Link href="/pricing"
+          className="text-xs text-accent hover:underline">
+          {isFree ? "See plans →" : "Compare plans →"}
+        </Link>
+      </header>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <UsageTile
+          label="Members"
+          used={usage.users}
+          cap={limits.max_users}
+          pct={userPct}
+        />
+        <UsageTile
+          label="Employee agents"
+          used={usage.employee_agents}
+          cap={limits.max_employees}
+          pct={empPct}
+        />
+        <UsageTile
+          label="Web searches today"
+          used={usage.web_search_today}
+          cap={limits.web_search_daily_quota}
+          pct={webPct}
+        />
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 text-xs">
+        <FeatureRow label="Forecasters">
+          {limits.allowed_forecasters.map((f) => (
+            <span key={f} className="num mr-1 rounded bg-bg-elev-2 px-1.5 py-0.5 text-[10px] text-text-dim">
+              {f}
+            </span>
+          ))}
+        </FeatureRow>
+        <FeatureRow label="Real-money trading">
+          {limits.paper_only ? (
+            <span className="text-text-mute">paper only</span>
+          ) : (
+            <span className="text-bull">✓ allowed (passkey gated)</span>
+          )}
+        </FeatureRow>
+        <FeatureRow label="Voice chat">
+          {limits.voice_minutes_per_month == null
+            ? <span className="text-bull">unlimited</span>
+            : limits.voice_minutes_per_month === 0
+              ? <span className="text-text-mute">not included</span>
+              : <span>{limits.voice_minutes_per_month} min / mo</span>}
+        </FeatureRow>
+        <FeatureRow label="Manager loop (1:1s, reviews)">
+          {limits.manager_loop ? (
+            <span className="text-bull">✓ included</span>
+          ) : (
+            <span className="text-text-mute">not included</span>
+          )}
+        </FeatureRow>
+      </div>
+
+      {isFree && (
+        <div className="rounded-md border border-accent/30 bg-accent/5 p-3 text-xs text-text-dim">
+          You're on the free tier. Upgrade to Starter to unlock Kronos, voice
+          chat, and 100 daily web searches.{" "}
+          <Link href="/pricing" className="text-accent hover:underline">See pricing →</Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UsageTile({
+  label, used, cap, pct,
+}: { label: string; used: number; cap: number | null; pct: number }) {
+  const tone = pct >= 90 ? "bg-bear" : pct >= 70 ? "bg-warning" : "bg-bull";
+  return (
+    <div className="rounded-md bg-bg-elev-1 p-3">
+      <div className="mb-1 flex items-baseline justify-between text-xs">
+        <span className="text-text-mute">{label}</span>
+        <span className="num text-text">
+          {used}{cap != null ? ` / ${cap}` : ""}
+        </span>
+      </div>
+      {cap != null && cap > 0 ? (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-bg-elev-2">
+          <div className={`h-full transition-all ${tone}`} style={{ width: `${pct}%` }} />
+        </div>
+      ) : (
+        <div className="text-[10px] text-text-mute">unlimited</div>
+      )}
+    </div>
+  );
+}
+
+function FeatureRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-md bg-bg-elev-1 px-3 py-2">
+      <span className="text-text-mute">{label}</span>
+      <span>{children}</span>
+    </div>
   );
 }
 

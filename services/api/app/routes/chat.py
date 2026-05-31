@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import CurrentAccount
 from app.db import acquire
-from app.llm import LLMMessage, ToolCall, get_adapter
+from app.llm import LLMMessage, ToolCall, get_adapter_for_company
 from app.memory import memory_service
 from app.personalities import PRESETS
 from app.tools import ToolContext, available_tools, execute_tool
@@ -411,7 +411,7 @@ async def chat(
         company_id=company_id, account_id=account_id, agent_id=agent_id,
     )
 
-    adapter = get_adapter(agent["llm_provider"])
+    adapter = await get_adapter_for_company(agent["llm_provider"], company_id)
     messages: list[LLMMessage] = list(history)
     # The new user message is already in `history` because we inserted then
     # reloaded — but inserting and re-querying is a wasted round-trip. Faster

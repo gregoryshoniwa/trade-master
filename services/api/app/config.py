@@ -16,6 +16,28 @@ class Settings(BaseSettings):
     jwt_ttl_hours: int = 24 * 7
     magic_link_ttl_minutes: int = 15
 
+    # Per-company credentials at rest are Fernet-encrypted. The key MUST
+    # be set in production (any 32-byte url-safe base64 string); the
+    # dev default lets you boot without thinking about it, but rotating
+    # this in prod requires re-encrypting all rows.
+    credentials_key: str = "dev_change_me_dev_change_me_dev_change_me="
+
+    # Stripe billing (Phase 4). Operator can leave these blank to
+    # disable billing entirely — the api still works; the pricing CTAs
+    # just become signup-form links instead of checkout redirects.
+    # In production fill in:
+    #   STRIPE_SECRET_KEY        sk_live_... (or sk_test_... for staging)
+    #   STRIPE_WEBHOOK_SECRET    whsec_... (from the webhook endpoint config)
+    #   STRIPE_PRICE_STARTER     price_... (lookup_key='starter' on the Stripe Price)
+    #   STRIPE_PRICE_PRO         price_... (lookup_key='pro')
+    #   STRIPE_BILLING_RETURN_URL  fully-qualified URL the customer comes
+    #                              back to from checkout / customer portal
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_starter: str = ""
+    stripe_price_pro: str = ""
+    stripe_billing_return_url: str = "http://localhost:3000/settings"
+
     # CORS — Phase 0 dev permissive
     cors_origins: str = "http://localhost:3000"
 

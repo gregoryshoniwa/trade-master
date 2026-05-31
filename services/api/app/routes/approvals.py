@@ -481,7 +481,7 @@ async def close_intent(
 
     payload = json.dumps({"contract_id": contract_id, "price": 0}).encode()
     try:
-        reply = await nc.request("deriv.sell.req", payload, timeout=25)
+        reply = await nc.request(f"deriv.sell.req.{company_id}", payload, timeout=25)
     except asyncio.TimeoutError:
         raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "sell timed out")
     try:

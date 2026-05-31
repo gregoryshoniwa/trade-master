@@ -8,6 +8,7 @@ import AssetPicker from "@/components/AssetPicker";
 import DailySummary from "@/components/DailySummary";
 import GoalProgress from "@/components/GoalProgress";
 import KillSwitch from "@/components/KillSwitch";
+import Landing from "@/components/Landing";
 import SafetyBadges from "@/components/SafetyBadges";
 import TickChart from "@/components/TickChart";
 import { api, type SymbolDef, type TradeIntent } from "@/lib/api";
@@ -187,9 +188,13 @@ export default function DashboardPage() {
     [intents, symbol],
   );
 
-  // The Shell handles the logged-out redirect to /login centrally, so we
-  // don't need to render an inline landing here. By the time this point is
-  // reached the Shell has already established that the user is signed in.
+  // The Shell allows `/` through for logged-out visitors so they hit the
+  // public landing page. Logged-in users skip past it straight to the
+  // dashboard render. The Shell's "Loading…" state covers the brief
+  // window where auth is resolving so we don't flash either UI.
+  if (!loading && !me) {
+    return <Landing />;
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">

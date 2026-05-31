@@ -20,8 +20,37 @@ export type Company = {
   paper_mode: boolean;
   current_asset_tier: number;
   unlocked_contract_types: string[];
+  tier_name: "free" | "starter" | "pro" | "enterprise";
   role: "owner" | "admin" | "trader" | "viewer";
   created_at: string;
+};
+
+export type BillingStatus = {
+  enabled: boolean;             // billing configured on this api instance
+  has_customer: boolean;        // company has a Stripe customer id
+  subscription_status: string | null;
+  current_period_end: string | null;
+  portal_available: boolean;
+};
+
+export type TierStatus = {
+  tier_name: "free" | "starter" | "pro" | "enterprise";
+  label: string;
+  label_color: string;
+  limits: {
+    max_users: number | null;
+    max_employees: number | null;
+    allowed_forecasters: string[];
+    paper_only: boolean;
+    voice_minutes_per_month: number | null;
+    web_search_daily_quota: number | null;
+    manager_loop: boolean;
+  };
+  usage: {
+    users: number;
+    employee_agents: number;
+    web_search_today: number;
+  };
 };
 
 export class ApiError extends Error {
@@ -324,10 +353,28 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  createMember: (
+    companyId: string,
+    body: {
+      email: string; full_name: string; password: string;
+      role: "admin" | "trader" | "viewer"; title?: string;
+    },
+  ) =>
+    request<CompanyMember>(`/api/v1/companies/${companyId}/members`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  resetMemberPassword: (companyId: string, accountId: string) =>
+    request<{ account_id: string; email: string; temp_password: string }>(
+      `/api/v1/companies/${companyId}/members/${accountId}/reset-password`,
+      { method: "POST" },
+    ),
+
   updateMember: (
     companyId: string,
     accountId: string,
-    body: { role: CompanyMember["role"]; title?: string },
+    body: { role?: CompanyMember["role"]; title?: string; full_name?: string },
   ) =>
     request<CompanyMember>(
       `/api/v1/companies/${companyId}/members/${accountId}`,
@@ -574,6 +621,16 @@ export const api = {
       `/api/v1/companies/${companyId}/agents/${agentId}/activity?limit=${limit}`,
     ),
 
+  // ─── per-company credentials (Deriv + LLM provider keys) ───
+  getCredentials: (companyId: string) =>
+    request<CredentialsStatus>(`/api/v1/companies/${companyId}/credentials`),
+
+  updateCredentials: (companyId: string, body: CredentialsUpdate) =>
+    request<CredentialsStatus>(
+      `/api/v1/companies/${companyId}/credentials`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+
   // ─── manager meetings ───
   triggerManagerReview: (companyId: string) =>
     request<{ accepted: boolean; note: string | null }>(
@@ -620,6 +677,25 @@ export const api = {
     ),
 
   // ─── company goals ───
+  getTierStatus: (companyId: string) =>
+    request<TierStatus>(`/api/v1/companies/${companyId}/tier`),
+
+  // ─── billing ───
+  getBillingStatus: (companyId: string) =>
+    request<BillingStatus>(`/api/v1/companies/${companyId}/billing`),
+
+  startCheckout: (companyId: string, tier: "starter" | "pro") =>
+    request<{ url: string }>(
+      `/api/v1/companies/${companyId}/billing/checkout`,
+      { method: "POST", body: JSON.stringify({ tier }) },
+    ),
+
+  openBillingPortal: (companyId: string) =>
+    request<{ url: string }>(
+      `/api/v1/companies/${companyId}/billing/portal`,
+      { method: "POST" },
+    ),
+
   getCompanyGoals: (companyId: string) =>
     request<CompanyGoals>(`/api/v1/companies/${companyId}/goals`),
 
@@ -745,6 +821,30 @@ export type MeetingTurn = {
 export type MeetingDetail = MeetingSummary & {
   narrative: string | null;
   transcript: MeetingTurn[];
+};
+
+export type CredentialsStatus = {
+  deriv_demo_configured: boolean;
+  deriv_real_configured: boolean;
+  deriv_environment: "demo" | "real";
+  anthropic_configured: boolean;
+  openai_configured: boolean;
+  gemini_configured: boolean;
+  openrouter_configured: boolean;
+  groq_configured: boolean;
+  updated_at: string | null;
+};
+
+export type CredentialsUpdate = {
+  // Empty string clears a configured key; omit to leave untouched.
+  deriv_token_demo?: string;
+  deriv_token_real?: string;
+  deriv_environment?: "demo" | "real";
+  anthropic_api_key?: string;
+  openai_api_key?: string;
+  gemini_api_key?: string;
+  openrouter_api_key?: string;
+  groq_api_key?: string;
 };
 
 export type EmployeeMeetingRequest = {
