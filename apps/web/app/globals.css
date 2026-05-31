@@ -221,10 +221,54 @@ html, body {
    "engineered system" without competing with the foreground. */
 .tm-grid {
   background-image:
-    linear-gradient(rgba(148,163,255,0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148,163,255,0.06) 1px, transparent 1px);
+    linear-gradient(rgba(148,163,255,0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,255,0.08) 1px, transparent 1px);
   background-size: 40px 40px;
   mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+/* Horizontal scan line that sweeps from top to bottom of the hero,
+   leaving a faint trailing afterglow. Reads as "live system". */
+@keyframes tm-scan {
+  0%   { transform: translateY(-10%); opacity: 0; }
+  10%  { opacity: 0.9; }
+  90%  { opacity: 0.9; }
+  100% { transform: translateY(110%); opacity: 0; }
+}
+.tm-scan {
+  pointer-events: none;
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.85), transparent);
+  box-shadow: 0 0 18px 2px rgba(125, 211, 252, 0.45);
+  animation: tm-scan 7s linear infinite;
+  mix-blend-mode: screen;
+}
+
+/* Tiny digital noise texture via a tiled radial-dot SVG. Inline as
+   a data URI so we don't ship an extra file. mix-blend-mode: screen
+   lifts the dark surface without washing it out. */
+.tm-noise {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.6  0 0 0 0 0.7  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.6'/></svg>");
+  mix-blend-mode: screen;
+  opacity: 0.08;
+}
+
+/* Vertical data-stream lines — three thin lines tick down columns,
+   pixel-y "ticker tape" feel for the hero. */
+@keyframes tm-stream-down {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(100%); }
+}
+.tm-stream {
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+  top: 0; bottom: 0;
+  background: linear-gradient(to bottom, transparent, rgba(125, 211, 252, 0.5) 40%, transparent);
+  animation: tm-stream-down 6s linear infinite;
+  mix-blend-mode: screen;
 }
 
 /* Wireframe globe rotation — spins the wrapper, not the SVG itself,
@@ -249,7 +293,8 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   [data-reveal],
   .tm-float, .tm-mesh, .tm-stream-line, .tm-pulse-ring,
-  .tm-flare-a, .tm-flare-b, .tm-flare-c, .tm-globe, .tm-candle {
+  .tm-flare-a, .tm-flare-b, .tm-flare-c, .tm-globe, .tm-candle,
+  .tm-scan, .tm-stream {
     animation: none !important;
     transform: none !important;
     opacity: 1 !important;

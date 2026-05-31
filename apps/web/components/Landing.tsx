@@ -206,12 +206,18 @@ export default function Landing() {
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden border-b border-border">
-        {/* layered background: mesh + grid + three saturated flares */}
+        {/* layered background: mesh + grid + noise + three flares + scan + streams */}
         <div className="tm-mesh absolute inset-0 opacity-95" aria-hidden />
-        <div className="tm-grid absolute inset-0 opacity-90" aria-hidden />
+        <div className="tm-grid absolute inset-0 opacity-100" aria-hidden />
+        <div className="tm-noise absolute inset-0" aria-hidden />
         <div className="tm-flare-a absolute left-[8%] top-[5%] h-[560px] w-[560px]" aria-hidden />
         <div className="tm-flare-b absolute right-[5%] bottom-[5%] h-[640px] w-[640px]" aria-hidden />
         <div className="tm-flare-c absolute left-1/2 top-1/3 h-[520px] w-[520px] -translate-x-1/2" aria-hidden />
+        {/* horizontal scan-line + three vertical data streams = "live system" feel */}
+        <div className="tm-scan top-1/4" aria-hidden />
+        <div className="tm-stream" style={{ left: "12%", animationDelay: "0s"   }} aria-hidden />
+        <div className="tm-stream" style={{ left: "28%", animationDelay: "2.4s" }} aria-hidden />
+        <div className="tm-stream" style={{ left: "46%", animationDelay: "4.1s" }} aria-hidden />
 
         {/* Globe sits as the dominant background visual — bleeds past
             the section's right edge and sits behind the foreground
@@ -231,7 +237,7 @@ export default function Landing() {
         />
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/30 to-bg" aria-hidden />
 
-        <div className="relative mx-auto max-w-6xl px-6 py-24 sm:py-32 lg:py-40">
+        <div className="relative mx-auto max-w-6xl px-6 pb-16 pt-10 sm:pb-20 sm:pt-14 lg:pb-24 lg:pt-16">
           <div className="max-w-2xl" data-reveal>
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
               <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
@@ -262,18 +268,24 @@ export default function Landing() {
             </div>
           </div>
 
-          {/* Floating candlestick card lives in the lower-right corner
-              of the hero, anchored over the globe for visual depth. */}
-          <div className="pointer-events-none absolute bottom-12 right-6 hidden lg:block">
+          {/* Candlestick card now lives in the body flow (after copy,
+              above the metrics) so it never collides with the metrics
+              cards. Hidden on small screens for layout breathing room. */}
+          <div className="mt-10 hidden lg:flex lg:justify-end">
             <CandleMini />
           </div>
 
-          <div data-reveal className="mt-20 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div data-reveal className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-4">
             {METRICS.map((m) => (
               <div
                 key={m.label}
-                className="rounded-xl border border-border bg-bg-card/80 p-4 backdrop-blur transition hover:border-accent/40"
+                className="group relative overflow-hidden rounded-xl border border-border bg-bg-card/80 p-4 backdrop-blur transition hover:border-accent/40"
               >
+                {/* Top-edge accent line that pulses on hover. */}
+                <span
+                  className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent opacity-60 transition group-hover:opacity-100"
+                  aria-hidden
+                />
                 <div className="num text-2xl font-semibold">{m.value}</div>
                 <div className="mt-1 text-[10px] uppercase tracking-widest text-text-mute">
                   {m.label}
