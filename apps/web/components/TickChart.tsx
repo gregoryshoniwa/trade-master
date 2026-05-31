@@ -640,25 +640,24 @@ export default function TickChart({
         </div>
       </div>
 
-      {/* The canvas itself fills the wrapper. No padding so the grid
-          extends edge-to-edge for that clean TradingView feel. */}
+      {/* The canvas itself fills the wrapper. The bottom info strip
+          sits OUTSIDE the canvas (separate flex child) so the time
+          axis labels never collide with bid/ask/forecast pills. */}
       <div ref={containerRef} className="min-h-0 w-full flex-1" />
 
-      {/* Floating bottom-right — forecast badge (only when there is one). */}
-      {forecast && (
-        <div className="pointer-events-auto absolute bottom-3 right-3 z-10 max-w-[260px] rounded-md border border-warning/40 bg-bg-card/80 p-2 backdrop-blur">
-          <ForecastBadge forecast={forecast} />
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pt-2 text-[11px]">
+        <div className="inline-flex items-center gap-3 rounded-md border border-border bg-bg-card/60 px-3 py-1">
+          <Inline label="Bid" value={latest?.bid != null ? fmt.format(latest.bid) : "—"} />
+          <Inline label="Ask" value={latest?.ask != null ? fmt.format(latest.ask) : "—"} />
+          <Inline label="Time" value={
+            latest ? new Date(latest.epoch * 1000).toLocaleTimeString("en-GB", { hour12: false }) : "—"
+          } />
         </div>
-      )}
-
-      {/* Bid / ask / epoch as a thin strip at the very bottom — kept
-          because users skim them often, but no longer a chunky grid. */}
-      <div className="absolute bottom-3 left-3 z-10 inline-flex items-center gap-3 rounded-md border border-border bg-bg-card/80 px-3 py-1.5 text-[11px] backdrop-blur">
-        <Inline label="Bid" value={latest?.bid != null ? fmt.format(latest.bid) : "—"} />
-        <Inline label="Ask" value={latest?.ask != null ? fmt.format(latest.ask) : "—"} />
-        <Inline label="Time" value={
-          latest ? new Date(latest.epoch * 1000).toLocaleTimeString("en-GB", { hour12: false }) : "—"
-        } />
+        {forecast && (
+          <div className="max-w-[260px] rounded-md border border-warning/40 bg-bg-card/60 px-3 py-1">
+            <ForecastBadge forecast={forecast} />
+          </div>
+        )}
       </div>
     </div>
   );

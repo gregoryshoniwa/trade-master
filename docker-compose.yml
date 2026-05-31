@@ -116,6 +116,11 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-trademaster-local}
       # Fernet key for per-company credentials at rest (Deriv + LLM keys).
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-dev_change_me_dev_change_me_dev_change_me=}
+      # Dev fallback Deriv token used by `get_deriv_token` when a company
+      # hasn't pasted its own in /settings yet. After Phase 1A.1 the
+      # gateway no longer reads this — only the api does — so this is
+      # the single place the system-owner key lives.
+      DERIV_API_TOKEN: ${DERIV_API_TOKEN:-}
       # Stripe billing (Phase 4). Leave blank in dev — pricing CTAs
       # fall through to signup links and the webhook returns 503.
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
