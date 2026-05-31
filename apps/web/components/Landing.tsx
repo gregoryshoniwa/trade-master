@@ -212,52 +212,68 @@ export default function Landing() {
         <div className="tm-flare-a absolute left-[8%] top-[5%] h-[560px] w-[560px]" aria-hidden />
         <div className="tm-flare-b absolute right-[5%] bottom-[5%] h-[640px] w-[640px]" aria-hidden />
         <div className="tm-flare-c absolute left-1/2 top-1/3 h-[520px] w-[520px] -translate-x-1/2" aria-hidden />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/40 to-bg" aria-hidden />
 
-        <div className="relative mx-auto max-w-6xl px-6 py-20 sm:py-28">
-          <div className="grid items-center gap-12 lg:grid-cols-[1.15fr_1fr]">
-            <div data-reveal>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
-                <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
-                The first AI firm with real meetings
-              </div>
-              <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
-                Trade with a <span className="text-accent">team of AI agents</span> that{" "}
-                <span className="text-bull">meet, review, and rewrite</span> each other.
-              </h1>
-              <p className="mt-6 max-w-xl text-base text-text-dim sm:text-lg">
-                Every other "AI trading" tool is one model in a costume.
-                TradeMaster is a firm: a manager agent, employee traders, a
-                risk officer. They sit down for 1:1 meetings every 4 hours.
-                They write postmortems. They argue. You are the CEO.
-              </p>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <Link href="/signup"
-                  className="rounded-md bg-bull px-5 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
-                  Start free — no card
-                </Link>
-                <a href="#how"
-                  className="rounded-md border border-border px-5 py-3 text-sm text-text-dim hover:border-accent/40 hover:text-text">
-                  See an AI meeting
-                </a>
-                <span className="text-xs text-text-mute">
-                  · paper-mode default · your keys, your spend
-                </span>
-              </div>
+        {/* Globe sits as the dominant background visual — bleeds past
+            the section's right edge and sits behind the foreground
+            copy. Hidden on small screens (canvas perf + layout). */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute right-[-12%] top-1/2 hidden -translate-y-1/2 opacity-90 md:block lg:right-[-8%]"
+        >
+          <GlobeVisual size={820} />
+        </div>
+
+        {/* Soft right-side gradient so the copy stays readable over
+            the globe's brightest pixels. */}
+        <div
+          aria-hidden
+          className="absolute inset-y-0 left-0 right-1/3 hidden bg-gradient-to-r from-bg via-bg/70 to-transparent md:block"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/30 to-bg" aria-hidden />
+
+        <div className="relative mx-auto max-w-6xl px-6 py-24 sm:py-32 lg:py-40">
+          <div className="max-w-2xl" data-reveal>
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
+              <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
+              The first AI firm with real meetings
             </div>
-
-            {/* Visual: rotating wireframe globe with hubs, overlaid by a
-                candlestick mini-chart. Tells the "global markets + AI
-                trading" story without stock photography. */}
-            <div data-reveal className="relative">
-              <GlobeVisual />
-              <CandleMini />
+            <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-7xl">
+              Trade with a <span className="text-accent">team of AI agents</span> that{" "}
+              <span className="text-bull">meet, review, and rewrite</span> each other.
+            </h1>
+            <p className="mt-7 max-w-xl text-base text-text-dim sm:text-lg">
+              Every other "AI trading" tool is one model in a costume.
+              TradeMaster is a firm: a manager agent, employee traders, a
+              risk officer. They sit down for 1:1 meetings every 4 hours.
+              They write postmortems. They argue. You are the CEO.
+            </p>
+            <div className="mt-9 flex flex-wrap items-center gap-3">
+              <Link href="/signup"
+                className="rounded-md bg-bull px-6 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
+                Start free — no card
+              </Link>
+              <a href="#how"
+                className="rounded-md border border-border bg-bg-card/40 px-6 py-3 text-sm text-text-dim backdrop-blur hover:border-accent/40 hover:text-text">
+                See an AI meeting
+              </a>
+              <span className="text-xs text-text-mute">
+                · paper-mode default · your keys, your spend
+              </span>
             </div>
           </div>
 
-          <div data-reveal className="mt-16 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {/* Floating candlestick card lives in the lower-right corner
+              of the hero, anchored over the globe for visual depth. */}
+          <div className="pointer-events-none absolute bottom-12 right-6 hidden lg:block">
+            <CandleMini />
+          </div>
+
+          <div data-reveal className="mt-20 grid grid-cols-2 gap-4 sm:grid-cols-4">
             {METRICS.map((m) => (
-              <div key={m.label} className="rounded-xl border border-border bg-bg-card/80 p-4 backdrop-blur transition hover:border-accent/40">
+              <div
+                key={m.label}
+                className="rounded-xl border border-border bg-bg-card/80 p-4 backdrop-blur transition hover:border-accent/40"
+              >
                 <div className="num text-2xl font-semibold">{m.value}</div>
                 <div className="mt-1 text-[10px] uppercase tracking-widest text-text-mute">
                   {m.label}
@@ -500,12 +516,11 @@ export default function Landing() {
   );
 }
 
-/** Canvas-based dotted globe with depth shading, slow rotation, and
- *  pulsing market hubs. ~700 dots distributed on a sphere via a
- *  Fibonacci lattice; each frame we rotate around the Y axis, project
- *  to 2D, and draw with size + alpha keyed off the dot's z-depth so
- *  the far hemisphere reads as the "back of the globe". */
-function GlobeVisual() {
+/** Canvas-based dotted globe with depth shading, slow rotation, pulsing
+ *  market hubs, and animated trade arcs between random hub pairs.
+ *  Sized big so it can sit behind the hero headline as the main visual,
+ *  not a corner illustration. */
+function GlobeVisual({ size = 680 }: { size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -517,19 +532,19 @@ function GlobeVisual() {
     // High-DPI: render at devicePixelRatio for crisp dots without
     // bumping the CSS box.
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cssSize = 380;
-    canvas.width = cssSize * dpr;
-    canvas.height = cssSize * dpr;
-    canvas.style.width = `${cssSize}px`;
-    canvas.style.height = `${cssSize}px`;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
     ctx.scale(dpr, dpr);
 
-    const cx = cssSize / 2;
-    const cy = cssSize / 2;
-    const R = cssSize * 0.42;
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = size * 0.42;
 
     // Fibonacci lattice — distributes N points evenly on a sphere.
-    const N = 700;
+    // Scale dot count with surface area for consistent density.
+    const N = Math.round((size / 380) ** 2 * 700);
     const golden = Math.PI * (3 - Math.sqrt(5));
     const baseDots: { x: number; y: number; z: number }[] = [];
     for (let i = 0; i < N; i++) {
@@ -543,17 +558,19 @@ function GlobeVisual() {
       });
     }
 
-    // Market hubs in (lat, lng) degrees. We project these the same
-    // way each frame so they rotate with the globe and pulse on top.
+    // Market hubs in (lat, lng) degrees. Projected and rotated each
+    // frame so they sit on the surface and rotate with the globe.
     const hubsLL = [
       { lat:  40.7, lng:  -74.0 }, // NY
       { lat:  51.5, lng:   -0.1 }, // London
       { lat:  50.1, lng:    8.7 }, // Frankfurt
       { lat:  35.7, lng:  139.7 }, // Tokyo
       { lat:  22.3, lng:  114.2 }, // Hong Kong
+      { lat:   1.3, lng:  103.8 }, // Singapore
       { lat: -33.9, lng:  151.2 }, // Sydney
       { lat: -23.5, lng:  -46.6 }, // São Paulo
       { lat: -26.2, lng:   28.0 }, // Johannesburg
+      { lat:  25.0, lng:   55.3 }, // Dubai
     ];
     const hubsXYZ = hubsLL.map(({ lat, lng }) => {
       const phi = (lat * Math.PI) / 180;
@@ -565,31 +582,119 @@ function GlobeVisual() {
       };
     });
 
+    // Arc queue — at most 4 in flight at a time. Each arc has a start/
+    // end hub index, start-time and duration. When an arc finishes, we
+    // pop it and schedule a fresh random pair.
+    type Arc = { from: number; to: number; startS: number; durS: number };
+    const arcs: Arc[] = [];
+    function scheduleArc(at: number) {
+      const from = Math.floor(Math.random() * hubsXYZ.length);
+      let to = Math.floor(Math.random() * hubsXYZ.length);
+      while (to === from) to = Math.floor(Math.random() * hubsXYZ.length);
+      arcs.push({ from, to, startS: at, durS: 2 + Math.random() * 1.5 });
+    }
+
     let rafId = 0;
     let t0 = 0;
+
+    function rotateY(p: {x:number;y:number;z:number}, cosA: number, sinA: number) {
+      return {
+        x: p.x * cosA + p.z * sinA,
+        y: p.y,
+        z: -p.x * sinA + p.z * cosA,
+      };
+    }
+
+    // Draw a great-circle-ish arc above the sphere between two surface
+    // points. We sample N intermediate points along the geodesic (slerp),
+    // lift each by an altitude curve, and stroke a polyline. Behind-globe
+    // pieces are skipped.
+    function drawArc(
+      a: {x:number;y:number;z:number},
+      b: {x:number;y:number;z:number},
+      progress: number,
+    ) {
+      const STEPS = 40;
+      const dot = a.x*b.x + a.y*b.y + a.z*b.z;
+      const omega = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (omega < 0.01) return;
+      const sinO = Math.sin(omega);
+      const head = Math.max(0.02, Math.min(1, progress));
+      ctx!.beginPath();
+      let started = false;
+      for (let i = 0; i <= STEPS; i++) {
+        const u = (i / STEPS) * head;
+        const w1 = Math.sin((1 - u) * omega) / sinO;
+        const w2 = Math.sin(u * omega) / sinO;
+        // Geodesic point on the unit sphere.
+        const gx = a.x * w1 + b.x * w2;
+        const gy = a.y * w1 + b.y * w2;
+        const gz = a.z * w1 + b.z * w2;
+        // Altitude bump — sin curve peaks mid-arc, ~25% of radius high.
+        const alt = Math.sin(u * Math.PI) * 0.32;
+        const r = 1 + alt;
+        const px = cx + gx * R * r;
+        const py = cy + gy * R * r;
+        // Hide segments whose underlying surface point is on the far side.
+        if (gz < -0.05) {
+          if (started) { ctx!.stroke(); ctx!.beginPath(); started = false; }
+          continue;
+        }
+        if (!started) { ctx!.moveTo(px, py); started = true; }
+        else ctx!.lineTo(px, py);
+      }
+      ctx!.stroke();
+
+      // Head-of-arc glow dot — only when the head is on the visible side.
+      if (head < 0.999) {
+        const u = head;
+        const w1 = Math.sin((1 - u) * omega) / sinO;
+        const w2 = Math.sin(u * omega) / sinO;
+        const gx = a.x * w1 + b.x * w2;
+        const gy = a.y * w1 + b.y * w2;
+        const gz = a.z * w1 + b.z * w2;
+        if (gz >= -0.05) {
+          const alt = Math.sin(u * Math.PI) * 0.32;
+          const r = 1 + alt;
+          const px = cx + gx * R * r;
+          const py = cy + gy * R * r;
+          const grad = ctx!.createRadialGradient(px, py, 0, px, py, 6);
+          grad.addColorStop(0, "rgba(125, 211, 252, 1)");
+          grad.addColorStop(1, "rgba(125, 211, 252, 0)");
+          ctx!.fillStyle = grad;
+          ctx!.beginPath();
+          ctx!.arc(px, py, 6, 0, Math.PI * 2);
+          ctx!.fill();
+        }
+      }
+    }
+
     function frame(t: number) {
       if (!t0) t0 = t;
       const elapsed = (t - t0) / 1000;
-      // 60s for a full rotation — matches the perceived "earth-like" speed.
-      const angle = (elapsed * Math.PI * 2) / 60;
+      // 80s per revolution — slower than before, more cinematic at this size.
+      const angle = (elapsed * Math.PI * 2) / 80;
       const cosA = Math.cos(angle);
       const sinA = Math.sin(angle);
 
-      if (!ctx) return;
-      ctx.clearRect(0, 0, cssSize, cssSize);
+      // Keep ~4 arcs running at a time.
+      while (arcs.length < 4) scheduleArc(elapsed);
 
-      // Atmosphere halo
-      const halo = ctx.createRadialGradient(cx, cy, R * 0.85, cx, cy, R * 1.25);
-      halo.addColorStop(0, "rgba(41, 98, 255, 0.18)");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, size, size);
+
+      // Outer atmosphere halo (well outside the body).
+      const halo = ctx.createRadialGradient(cx, cy, R * 0.95, cx, cy, R * 1.5);
+      halo.addColorStop(0, "rgba(41, 98, 255, 0.32)");
       halo.addColorStop(1, "rgba(41, 98, 255, 0)");
       ctx.fillStyle = halo;
-      ctx.fillRect(0, 0, cssSize, cssSize);
+      ctx.fillRect(0, 0, size, size);
 
-      // Sphere body — very dark navy, gives the dots a surface to sit on.
-      const body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.3, R * 0.1, cx, cy, R);
-      body.addColorStop(0, "#1a2235");
-      body.addColorStop(0.7, "#0f1623");
-      body.addColorStop(1, "#0a1020");
+      // Sphere body radial gradient — gives the dots a surface.
+      const body = ctx.createRadialGradient(cx - R * 0.32, cy - R * 0.32, R * 0.1, cx, cy, R);
+      body.addColorStop(0, "#1a2540");
+      body.addColorStop(0.7, "#0d1525");
+      body.addColorStop(1, "#070b18");
       ctx.beginPath();
       ctx.arc(cx, cy, R, 0, Math.PI * 2);
       ctx.fillStyle = body;
@@ -600,50 +705,60 @@ function GlobeVisual() {
         const rx = d.x * cosA + d.z * sinA;
         const rz = -d.x * sinA + d.z * cosA;
         const ry = d.y;
-        // Front-hemisphere dots are bright; back-hemisphere dim.
         const depth = (rz + 1) / 2; // 0 = far, 1 = near
-        const alpha = 0.15 + depth * 0.55;
-        const size = 0.6 + depth * 1.4;
+        const alpha = 0.18 + depth * 0.62;
+        const dotSize = 0.7 + depth * 1.5;
         const px = cx + rx * R;
         const py = cy + ry * R;
-        // Subtle cyan→blue tint based on latitude so the globe doesn't
-        // read as monotone.
-        const lat = Math.asin(ry); // -PI/2 .. PI/2
+        const lat = Math.asin(ry);
         const hue = 200 + lat * 14;
-        ctx.fillStyle = `hsla(${hue.toFixed(0)}, 80%, 70%, ${alpha.toFixed(3)})`;
+        ctx.fillStyle = `hsla(${hue.toFixed(0)}, 85%, 72%, ${alpha.toFixed(3)})`;
         ctx.beginPath();
-        ctx.arc(px, py, size, 0, Math.PI * 2);
+        ctx.arc(px, py, dotSize, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Subtle equator ring for orientation.
+      // Equator + a meridian for orientation.
       ctx.strokeStyle = "rgba(180, 200, 255, 0.08)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.ellipse(cx, cy, R, R * 0.04, 0, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Market hubs — pulse + ring on the front hemisphere only.
-      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
+      // Animated trade arcs.
+      ctx.lineWidth = 1.6;
+      for (let ai = arcs.length - 1; ai >= 0; ai--) {
+        const arc = arcs[ai];
+        const u = (elapsed - arc.startS) / arc.durS;
+        if (u >= 1.4) {
+          arcs.splice(ai, 1);
+          continue;
+        }
+        const head = Math.min(1, u);
+        const tail = Math.max(0, u - 0.6) / 0.4; // fade-out trail
+        const a = rotateY(hubsXYZ[arc.from], cosA, sinA);
+        const b = rotateY(hubsXYZ[arc.to], cosA, sinA);
+        ctx.strokeStyle = `rgba(125, 211, 252, ${(0.85 * (1 - tail)).toFixed(3)})`;
+        drawArc(a, b, head);
+      }
+
+      // Market hubs — only those visible on the near hemisphere.
       for (let i = 0; i < hubsXYZ.length; i++) {
-        const h = hubsXYZ[i];
-        const rx = h.x * cosA + h.z * sinA;
-        const rz = -h.x * sinA + h.z * cosA;
-        const ry = h.y;
-        if (rz < -0.15) continue; // behind the globe
-        const px = cx + rx * R;
-        const py = cy + ry * R;
-        const local = 0.5 + 0.5 * Math.sin(elapsed * 2.2 + i * 0.9);
+        const h = rotateY(hubsXYZ[i], cosA, sinA);
+        if (h.z < -0.1) continue;
+        const px = cx + h.x * R;
+        const py = cy + h.y * R;
+        const local = 0.5 + 0.5 * Math.sin(elapsed * 2.0 + i * 0.7);
         // Glow ring
-        ctx.strokeStyle = `rgba(38, 166, 154, ${(0.45 * (1 - local)).toFixed(3)})`;
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(38, 166, 154, ${(0.55 * (1 - local)).toFixed(3)})`;
+        ctx.lineWidth = 1.8;
         ctx.beginPath();
-        ctx.arc(px, py, 3 + local * 9, 0, Math.PI * 2);
+        ctx.arc(px, py, 4 + local * 12, 0, Math.PI * 2);
         ctx.stroke();
         // Core
-        ctx.fillStyle = `rgba(38, 166, 154, ${(0.85 + 0.15 * pulse).toFixed(3)})`;
+        ctx.fillStyle = "rgba(38, 166, 154, 0.95)";
         ctx.beginPath();
-        ctx.arc(px, py, 2.6, 0, Math.PI * 2);
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -652,12 +767,15 @@ function GlobeVisual() {
     rafId = requestAnimationFrame(frame);
 
     return () => cancelAnimationFrame(rafId);
-  }, []);
+  }, [size]);
 
   return (
-    <div className="relative mx-auto h-[380px] w-[380px]">
-      {/* Outer halo backlight */}
-      <div className="absolute inset-0 -z-10 rounded-full bg-accent/15 blur-3xl" />
+    <div className="relative" style={{ width: size, height: size }}>
+      {/* Wide outer halo backlight reaching beyond the canvas. */}
+      <div
+        className="absolute -inset-32 -z-10 rounded-full bg-accent/20 blur-[120px]"
+        aria-hidden
+      />
       <canvas ref={canvasRef} aria-hidden className="block" />
     </div>
   );
@@ -684,7 +802,7 @@ function CandleMini() {
     { y: 0,  h: 12, color: "bull" },
   ];
   return (
-    <div className="pointer-events-none absolute -bottom-4 -right-4 rounded-xl border border-border bg-bg-card/85 p-3 shadow-2xl backdrop-blur">
+    <div className="rounded-xl border border-border bg-bg-card/85 p-3 shadow-2xl backdrop-blur">
       <div className="mb-2 flex items-center gap-2 text-[10px] text-text-mute">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-bull" />
         Live · 1m
