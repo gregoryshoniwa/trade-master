@@ -307,8 +307,21 @@ function PositionRow({
               </span>
             </span>
             {unrealized != null ? (
-              <span className={`num ${tone}`}>
+              <span
+                className={`num ${tone}`}
+                title={
+                  intent.contract_type.startsWith("MULT")
+                    ? "Estimated unrealized P&L from price move. The actual " +
+                      "close payout includes broker commission (~0.3% of " +
+                      "stake × multiplier on Deriv multipliers), so a small " +
+                      "positive number here can settle slightly negative."
+                    : "Unrealized P&L from current vs entry price"
+                }
+              >
                 {unrealized >= 0 ? "+" : ""}{FMT_USD.format(unrealized)}
+                {intent.contract_type.startsWith("MULT") && (
+                  <span className="ml-0.5 text-[9px] text-text-mute">~</span>
+                )}
               </span>
             ) : (
               <span className="num text-text-mute">{FMT_USD.format(intent.stake_usd)}</span>
@@ -353,6 +366,15 @@ export function computeUnrealized(intent: TradeIntent, livePrice: number | null)
   return ret * sign * intent.stake_usd * mult;
 }
 
+/** CEO trades attribute to the manager agent (schema FK) but the user
+ *  reads them as their own "agent" — flagged by source_model. We bucket
+ *  them under a synthetic key so they don't muddy the manager's rollup. */
+const CEO_BUCKET_KEY = "__ceo__";
+
+function isCeoTrade(i: TradeIntent): boolean {
+  return i.source_model === "ceo_manual";
+}
+
 /** Roll up intents into per-agent buckets. `livePrices` keys on asset symbol
  *  and provides the current quote — used for the unrealized-P&L hint. */
 function groupByAgent(intents: TradeIntent[], livePrices: LivePrices): AgentBucket[] {
@@ -360,18 +382,20 @@ function groupByAgent(intents: TradeIntent[], livePrices: LivePrices): AgentBuck
   const byAgent = new Map<string, AgentBucket>();
 
   for (const i of intents) {
-    let b = byAgent.get(i.agent_id);
+    const isCeo = isCeoTrade(i);
+    const bucketKey = isCeo ? CEO_BUCKET_KEY : i.agent_id;
+    let b = byAgent.get(bucketKey);
     if (!b) {
       b = {
-        agentId: i.agent_id,
-        agentName: i.agent_name,
+        agentId: bucketKey,
+        agentName: isCeo ? "CEO" : i.agent_name,
         open: [],
         closedToday: [],
         intentsToday: [],
         pnlToday: 0,
         unrealized: 0,
       };
-      byAgent.set(i.agent_id, b);
+      byAgent.set(bucketKey, b);
     }
     const createdToday = i.created_at.startsWith(today);
     if (createdToday) b.intentsToday.push(i);
