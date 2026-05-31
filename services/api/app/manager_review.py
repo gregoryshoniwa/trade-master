@@ -146,7 +146,37 @@ Workflow:
    — e.g. "ECB rate decision impact on EURUSD this week".
 3. Decide which employees (if any) need action — 0 to 3 total.
 4. Take the actions.
-5. End with a short text summary of what you changed and why."""
+5. End with a short summary of what you changed and why.
+
+Summary style — IMPORTANT, read this carefully:
+
+The summary is read by the CEO (a human), not by code. Write it for
+a non-engineer customer.
+
+* No UUIDs, no internal IDs, no JSON, no fenced code blocks.
+* No raw field names. Translate every field to plain English:
+    - `allocated_balance_usd` → "trading allocation"
+    - `min_payoff_ratio` → "payoff target" / "risk/reward threshold"
+    - `kelly_fraction` → "position sizing fraction"
+    - `min_confidence_threshold` → "minimum confidence to trade"
+    - `max_position_size_usd` → "max position size"
+    - `max_trades_per_day` → "daily trade cap"
+    - `target_holding_secs` → "average hold time"
+    - `daily_profit_target_usd` → "daily profit target"
+* Refer to employees by NAME ("Kronny", "Trendy"), never by id.
+* When you show a table, use proper GitHub-Flavored Markdown table
+  syntax (a header row, a `|---|---|` separator, body rows). Each
+  cell should be human-readable text — no field names, no IDs, no
+  raw numbers without units.
+* Number changes should read like "raised her daily profit target
+  from $0 to $15" or "lowered Trendy's payoff target from 3.5 to
+  3.0", not "set X=15" or "X: 3.5 → 3.0".
+* Use these section headings, in this order, with `##` markdown:
+    "## Scheduled Team Review — Summary"
+    "## Employee Rundown" (table)
+    "## Actions Taken (n/n)" (numbered list, plain English per item)
+    "## Why" (one paragraph: what story the data told you)
+* Keep it under ~400 words. The CEO scrolls fast."""
 
 REVIEW_USER_PROMPT_BASE = (
     "Please run your scheduled team review now. Read the team status, "
