@@ -796,25 +796,35 @@ function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: Chart
   );
 }
 
-/** Compact forecast pill rendered as a floating overlay on the chart's
- *  bottom-right corner. Renders nothing if no forecast yet — caller
- *  conditions on `forecast` truthiness. */
+/** Map a technical model name to something a non-engineer reads
+ *  cleanly. Falls back to the raw name when we don't have an entry —
+ *  so an experimental model still renders, just verbosely. */
+function friendlyForecasterName(model: string): string {
+  const m = model.toLowerCase();
+  if (m.startsWith("ttm")) return "TTM";
+  if (m.startsWith("kronos")) return "Kronos";
+  if (m.startsWith("tsfm")) return "Ensemble";
+  if (m.startsWith("chronos")) return "Chronos";
+  if (m.startsWith("moirai")) return "Moirai";
+  return model;
+}
+
+/** Compact single-line forecast pill. Reads as
+ *  "TTM ▼ down · 63% · next 96s" with full model + latency on hover. */
 function ForecastBadge({ forecast }: { forecast: ForecastPayload }) {
   const dir = forecast.point_direction;
   const glyph = dir === "up" ? "▲" : dir === "down" ? "▼" : "●";
   const dirColor = dir === "up" ? "text-bull" : dir === "down" ? "text-bear" : "text-text-mute";
   return (
-    <div className="text-[11px]">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-warning">{forecast.model} · {forecast.horizon_steps}-step</span>
-        <span className="num text-text-mute">{forecast.latency_ms.toFixed(0)}ms</span>
-      </div>
-      <div className="mt-0.5 flex items-baseline gap-2">
-        <span className={`num text-xs ${dirColor}`}>{glyph} {dir}</span>
-        <span className="num text-[10px] text-text-mute">
-          conf {(forecast.confidence_score * 100).toFixed(0)}%
-        </span>
-      </div>
+    <div
+      className="inline-flex items-baseline gap-2 text-[11px]"
+      title={`${forecast.model} · ${forecast.horizon_steps}-step · ${forecast.latency_ms.toFixed(0)}ms`}
+    >
+      <span className="text-warning">{friendlyForecasterName(forecast.model)}</span>
+      <span className={`num ${dirColor}`}>{glyph} {dir}</span>
+      <span className="num text-text-mute">{(forecast.confidence_score * 100).toFixed(0)}%</span>
+      <span className="text-text-mute">·</span>
+      <span className="num text-text-mute">next {forecast.horizon_steps}s</span>
     </div>
   );
 }
