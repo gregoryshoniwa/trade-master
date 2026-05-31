@@ -45,10 +45,22 @@ async def get_balance(company_id: CurrentCompanyId):
     """Latest broker balance for the caller's active company. Populated
     by `deriv.balance.{company_id}` pushes from the gateway; returns
     `available=false` until the gateway has placed the first poll for
-    this company (which happens after the company's token is configured
-    and the pool warms up)."""
+    this company.
+
+    Cold-start: if we have no cached balance, publish a `deriv.warm.{cid}`
+    signal so the gateway lazily creates its per-company client and
+    starts polling. The next `GET /balance` (5s away on the web poller)
+    will find a snapshot. Without this nudge, balance only shows up
+    after the company places its first trade or saves credentials —
+    bad UX for an existing company on first dashboard load."""
     state = deriv_cache.latest(company_id)
     if state is None:
+        nc = bus.nc()
+        if nc is not None:
+            try:
+                await nc.publish(f"deriv.warm.{company_id}", b"")
+            except Exception:
+                pass
         return Balance(available=False)
     return Balance(
         loginid=state.get("loginid"),

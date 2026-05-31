@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  AreaSeries,
   CandlestickSeries,
   createChart,
   createSeriesMarkers,
@@ -26,12 +27,19 @@ function chartColors() {
   const warning = cssVar("--color-warning") || "#FFB74D";
   const text = cssVar("--color-text-dim") || "#9BA3AF";
   const border = cssVar("--color-border") || "#252C36";
-  const bg = cssVar("--color-bg-card") || "#161B22";
+  const bg = cssVar("--color-bg") || "#0E1116";
   const bull = cssVar("--color-bull") || "#26A69A";
   const bear = cssVar("--color-bear") || "#EF5350";
+  // Lighter grid than border — Deriv-style subtle ruling. Picks a low-
+  // alpha version of the border color so it works on any theme.
+  const grid = border.startsWith("#") && border.length === 7 ? `${border}88` : border;
   // ~40% alpha band derived from the warning hex.
   const bandSoft = warning.startsWith("#") && warning.length === 7 ? `${warning}66` : warning;
-  return { accent, warning, text, border, bg, bull, bear, bandSoft };
+  // Area-fill stops for the primary series. Accent at the top fading to
+  // transparent at the bottom for that clean Deriv/TradingView feel.
+  const areaTop = accent.startsWith("#") && accent.length === 7 ? `${accent}44` : accent;
+  const areaBottom = accent.startsWith("#") && accent.length === 7 ? `${accent}00` : accent;
+  return { accent, warning, text, border, grid, bg, bull, bear, bandSoft, areaTop, areaBottom };
 }
 
 type TickPayload = {
@@ -86,7 +94,7 @@ export default function TickChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const lineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const lineSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const p50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const p10SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -139,13 +147,19 @@ export default function TickChart({
         fontFamily:
           'ui-monospace, "JetBrains Mono Variable", "IBM Plex Mono", Menlo, monospace',
       },
+      // Lighter grid + invisible scale borders so the chart blends with
+      // the dashboard surface instead of sitting in a hard frame.
       grid: {
-        vertLines: { color: c.border },
-        horzLines: { color: c.border },
+        vertLines: { color: c.grid, style: 1 },
+        horzLines: { color: c.grid, style: 1 },
       },
-      rightPriceScale: { borderColor: c.border },
+      rightPriceScale: {
+        borderColor: c.bg,
+        borderVisible: false,
+      },
       timeScale: {
-        borderColor: c.border,
+        borderColor: c.bg,
+        borderVisible: false,
         timeVisible: true,
         secondsVisible: true,
         rightOffset: 24,
@@ -162,8 +176,14 @@ export default function TickChart({
       },
     });
 
-    const lineSeries = chart.addSeries(LineSeries, {
-      color: c.accent,
+    // Primary "line" mode now renders as an area with a gradient fill —
+    // matches the Deriv/TradingView clean look while still showing the
+    // trace clearly. CandlestickSeries is the alternate, toggled by the
+    // mode chips above the chart.
+    const lineSeries = chart.addSeries(AreaSeries, {
+      lineColor: c.accent,
+      topColor: c.areaTop,
+      bottomColor: c.areaBottom,
       lineWidth: 2,
       priceLineColor: c.accent,
       priceLineStyle: 2,
@@ -269,7 +289,12 @@ export default function TickChart({
         horzLine: { color: c.accent, labelBackgroundColor: c.accent },
       },
     });
-    lineSeriesRef.current?.applyOptions({ color: c.accent, priceLineColor: c.accent });
+    lineSeriesRef.current?.applyOptions({
+      lineColor: c.accent,
+      topColor: c.areaTop,
+      bottomColor: c.areaBottom,
+      priceLineColor: c.accent,
+    });
     candleSeriesRef.current?.applyOptions({
       upColor: c.bull, borderUpColor: c.bull, wickUpColor: c.bull,
       downColor: c.bear, borderDownColor: c.bear, wickDownColor: c.bear,
@@ -575,58 +600,76 @@ export default function TickChart({
   const deltaGlyph = delta == null ? "●" : delta >= 0 ? "▲" : "▼";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-bg-card p-4 shadow-glow">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <div className="text-xs uppercase tracking-widest text-text-mute">
-            {displayName ?? symbol} · live
-          </div>
-          <div className="num mt-1 flex items-baseline gap-3 text-3xl font-medium">
-            <span>{latest ? fmt.format(latest.quote) : "—"}</span>
-            <span className={`text-sm ${deltaColor}`}>
-              {deltaGlyph} {delta != null ? fmt.format(Math.abs(delta)) : "0.0000"}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <ModeToggle value={mode} onChange={setMode} />
-          <IndicatorChips
-            sma20={showSMA20} onSMA20={setShowSMA20}
-            sma50={showSMA50} onSMA50={setShowSMA50}
-          />
-          <button
-            type="button"
-            onClick={() => chartRef.current?.timeScale().fitContent()}
-            className="rounded-md border border-border bg-bg-elev-1 px-2 py-1 text-xs text-text-dim hover:border-accent/40 hover:text-text"
-            title="Fit all data into view"
-          >
-            Fit
-          </button>
-          <div className="text-right text-xs">
-            <div className={connected ? "text-bull" : "text-bear"}>
-              {connected ? "● connected" : "○ disconnected"}
-            </div>
-            <div className="num mt-1 text-text-mute">
-              {tickCount} ticks{historyRows != null ? ` · ${historyRows} backfill` : ""}
-            </div>
-          </div>
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Floating top overlay — symbol pill + price. Sits ON the chart
+          instead of stealing vertical space above it. */}
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col gap-1">
+        <div className="pointer-events-auto inline-flex w-fit items-center gap-2 rounded-md border border-border bg-bg-card/80 px-3 py-1.5 backdrop-blur">
+          <span className="text-[10px] uppercase tracking-widest text-text-mute">
+            {displayName ?? symbol}
+          </span>
+          <span className="num text-sm font-medium" title="Live last price">
+            {latest ? fmt.format(latest.quote) : "—"}
+          </span>
+          <span className={`text-[11px] ${deltaColor}`}>
+            {deltaGlyph} {delta != null ? fmt.format(Math.abs(delta)) : "—"}
+          </span>
         </div>
       </div>
 
-      {/* flex-1 + min-h-0 lets the canvas eat whatever vertical space the
-          parent (dashboard) gives it; ResizeObserver above keeps the
-          chart instance in sync. */}
+      {/* Floating top-right cluster — mode toggle, indicators, Fit. */}
+      <div className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-2">
+        <ModeToggle value={mode} onChange={setMode} />
+        <IndicatorChips
+          sma20={showSMA20} onSMA20={setShowSMA20}
+          sma50={showSMA50} onSMA50={setShowSMA50}
+        />
+        <button
+          type="button"
+          onClick={() => chartRef.current?.timeScale().fitContent()}
+          className="rounded-md border border-border bg-bg-card/80 px-2 py-1 text-[11px] text-text-dim backdrop-blur hover:border-accent/40 hover:text-text"
+          title="Fit all data into view"
+        >
+          Fit
+        </button>
+        <div
+          className={`flex items-center gap-1 rounded-md border border-border bg-bg-card/80 px-2 py-1 text-[11px] backdrop-blur ${connected ? "text-bull" : "text-bear"}`}
+          title={`${tickCount} ticks${historyRows != null ? ` · ${historyRows} backfill` : ""}`}
+        >
+          {connected ? "● live" : "○ off"}
+        </div>
+      </div>
+
+      {/* The canvas itself fills the wrapper. No padding so the grid
+          extends edge-to-edge for that clean TradingView feel. */}
       <div ref={containerRef} className="min-h-0 w-full flex-1" />
 
-      <div className="mt-3 grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Bid" value={latest?.bid != null ? fmt.format(latest.bid) : "—"} />
-        <Stat label="Ask" value={latest?.ask != null ? fmt.format(latest.ask) : "—"} />
-        <Stat label="Epoch" value={
+      {/* Floating bottom-right — forecast badge (only when there is one). */}
+      {forecast && (
+        <div className="pointer-events-auto absolute bottom-3 right-3 z-10 max-w-[260px] rounded-md border border-warning/40 bg-bg-card/80 p-2 backdrop-blur">
+          <ForecastBadge forecast={forecast} />
+        </div>
+      )}
+
+      {/* Bid / ask / epoch as a thin strip at the very bottom — kept
+          because users skim them often, but no longer a chunky grid. */}
+      <div className="absolute bottom-3 left-3 z-10 inline-flex items-center gap-3 rounded-md border border-border bg-bg-card/80 px-3 py-1.5 text-[11px] backdrop-blur">
+        <Inline label="Bid" value={latest?.bid != null ? fmt.format(latest.bid) : "—"} />
+        <Inline label="Ask" value={latest?.ask != null ? fmt.format(latest.ask) : "—"} />
+        <Inline label="Time" value={
           latest ? new Date(latest.epoch * 1000).toLocaleTimeString("en-GB", { hour12: false }) : "—"
         } />
-        <ForecastStat forecast={forecast} />
       </div>
     </div>
+  );
+}
+
+function Inline({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-[10px] uppercase tracking-widest text-text-mute">{label}</span>
+      <span className="num">{value}</span>
+    </span>
   );
 }
 
@@ -706,7 +749,7 @@ function IndicatorChips({
   sma50: boolean; onSMA50: (v: boolean) => void;
 }) {
   return (
-    <div className="flex gap-1 rounded-md border border-border bg-bg-elev-1 p-1 text-xs">
+    <div className="flex gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-xs backdrop-blur">
       <Chip on={sma20} onClick={() => onSMA20(!sma20)} tone="bull">SMA 20</Chip>
       <Chip on={sma50} onClick={() => onSMA50(!sma50)} tone="bear">SMA 50</Chip>
     </div>
@@ -736,7 +779,7 @@ function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: Chart
     { v: "candles", label: "Candles" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border border-border bg-bg-elev-1 p-1 text-xs">
+    <div className="flex gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-xs backdrop-blur">
       {opts.map((o) => (
         <button
           key={o.v}
@@ -753,36 +796,22 @@ function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: Chart
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-bg-elev-1 p-3 text-xs">
-      <div className="text-text-mute">{label}</div>
-      <div className="num mt-1 text-text">{value}</div>
-    </div>
-  );
-}
-
-function ForecastStat({ forecast }: { forecast: ForecastPayload | null }) {
-  if (!forecast) {
-    return (
-      <div className="rounded-lg border border-warning/20 bg-bg-elev-1 p-3 text-xs">
-        <div className="text-text-mute">forecast</div>
-        <div className="num mt-1 text-warning">warming up…</div>
-      </div>
-    );
-  }
+/** Compact forecast pill rendered as a floating overlay on the chart's
+ *  bottom-right corner. Renders nothing if no forecast yet — caller
+ *  conditions on `forecast` truthiness. */
+function ForecastBadge({ forecast }: { forecast: ForecastPayload }) {
   const dir = forecast.point_direction;
   const glyph = dir === "up" ? "▲" : dir === "down" ? "▼" : "●";
   const dirColor = dir === "up" ? "text-bull" : dir === "down" ? "text-bear" : "text-text-mute";
   return (
-    <div className="rounded-lg border border-warning/30 bg-bg-elev-1 p-3 text-xs">
-      <div className="flex items-center justify-between">
+    <div className="text-[11px]">
+      <div className="flex items-center justify-between gap-3">
         <span className="text-warning">{forecast.model} · {forecast.horizon_steps}-step</span>
         <span className="num text-text-mute">{forecast.latency_ms.toFixed(0)}ms</span>
       </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <span className={`num text-sm ${dirColor}`}>{glyph} {dir}</span>
-        <span className="num text-xs text-text-mute">
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className={`num text-xs ${dirColor}`}>{glyph} {dir}</span>
+        <span className="num text-[10px] text-text-mute">
           conf {(forecast.confidence_score * 100).toFixed(0)}%
         </span>
       </div>
