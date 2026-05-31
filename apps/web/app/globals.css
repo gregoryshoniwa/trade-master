@@ -181,9 +181,56 @@ html, body {
   animation: tm-pulse-ring 2.4s infinite;
 }
 
+/* Lens flare layer. Used by the hero — two soft cyan/blue radials
+   that drift slowly so the background never feels static. The
+   blend mode brightens dark surfaces without washing out copy. */
+@keyframes tm-flare-drift {
+  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  50%     { transform: translate3d(2%, -1%, 0) scale(1.08); opacity: 1; }
+}
+@keyframes tm-flare-drift-b {
+  0%,100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
+  50%     { transform: translate3d(-3%, 2%, 0) scale(1.05); opacity: 0.95; }
+}
+.tm-flare-a, .tm-flare-b {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  mix-blend-mode: screen;
+}
+.tm-flare-a {
+  background: radial-gradient(circle at center, rgba(41, 98, 255, 0.65), transparent 60%);
+  animation: tm-flare-drift 14s ease-in-out infinite;
+}
+.tm-flare-b {
+  background: radial-gradient(circle at center, rgba(38, 166, 154, 0.55), transparent 60%);
+  animation: tm-flare-drift-b 18s ease-in-out infinite;
+}
+
+/* Wireframe globe rotation — spins the wrapper, not the SVG itself,
+   so latitude/longitude lines drawn straight stay sharp. */
+@keyframes tm-globe-spin {
+  to { transform: rotate(360deg); }
+}
+.tm-globe { animation: tm-globe-spin 60s linear infinite; }
+
+/* Candlestick draw-in animation — each candle wipes in on its own delay
+   driven by `--i` (0-based index). Used by the hero mockup. */
+@keyframes tm-candle-rise {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+.tm-candle {
+  transform-origin: 50% 50%;
+  animation: tm-candle-rise 600ms ease-out backwards;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-reveal],
-  .tm-float, .tm-mesh, .tm-stream-line, .tm-pulse-ring {
+  .tm-float, .tm-mesh, .tm-stream-line, .tm-pulse-ring,
+  .tm-flare-a, .tm-flare-b, .tm-globe, .tm-candle {
     animation: none !important;
     transform: none !important;
     opacity: 1 !important;
