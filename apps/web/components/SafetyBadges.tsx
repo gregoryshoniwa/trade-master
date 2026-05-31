@@ -44,13 +44,15 @@ export default function SafetyBadges({ companyId }: { companyId: string }) {
       {insurance > 0 && (
         <span
           title={
-            state.recent_sweeps.length
-              ? `Last sweep: ${state.recent_sweeps[0].reason}`
-              : "Built up by the profit-sweep job"
+            "Safety reserve — a portion of profitable days is automatically " +
+            "set aside to absorb future losses without touching your live " +
+            "balance." + (state.recent_sweeps.length
+              ? ` Last sweep: ${state.recent_sweeps[0].reason}`
+              : "")
           }
           className="num inline-flex items-center gap-1 rounded-md border border-bull/40 bg-bull-soft px-2 py-1 text-bull"
         >
-          🏦 {FMT_USD.format(insurance)} insured
+          🛡️ {FMT_USD.format(insurance)} reserve
         </span>
       )}
       {cooling.map((a) => (

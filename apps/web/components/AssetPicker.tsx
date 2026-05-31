@@ -77,7 +77,7 @@ export default function AssetPicker({ value, onChange }: Props) {
       </button>
 
       {open && symbols && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-72 rounded-md border border-border bg-bg-card p-1 shadow-xl">
+        <div className="absolute right-0 top-full z-30 mt-1 max-h-[60vh] w-72 overflow-y-auto rounded-md border border-border bg-bg-card p-1 shadow-xl">
           {grouped.map(([cls, list]) => (
             <div key={cls} className="py-1">
               <div className="px-2 py-1 text-[10px] uppercase tracking-widest text-text-mute">
