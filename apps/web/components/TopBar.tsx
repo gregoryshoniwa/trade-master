@@ -3,10 +3,14 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import AgentMenu from "@/components/AgentMenu";
+import DailySummary from "@/components/DailySummary";
 import DerivBalance from "@/components/DerivBalance";
+import GoalProgress from "@/components/GoalProgress";
 import NotificationBell from "@/components/NotificationBell";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
+import { usePathname } from "next/navigation";
 
 type Props = {
   onMobileMenu?: () => void;
@@ -20,6 +24,12 @@ export default function TopBar({ onMobileMenu }: Props) {
   const [companiesOpen, setCompaniesOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const active = companies.find((c) => c.id === activeCompanyId) ?? null;
+  const pathname = usePathname();
+  // Goal/team chips and the Talk-to menu are universal across the
+  // app — they let the user act on agents without leaving the current
+  // page. We hide them on auth screens (handled at the Shell level)
+  // and on /login/signup (defensive — Shell already short-circuits).
+  const showCompanyExtras = !!(me && active) && !pathname?.startsWith("/login") && !pathname?.startsWith("/signup");
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-bg-elev-1 px-3">
@@ -35,7 +45,21 @@ export default function TopBar({ onMobileMenu }: Props) {
         </button>
       </div>
 
+      {/* Middle band — goal bar + team chips. Hidden under lg so the
+          bar doesn't crowd on tablets. */}
+      {showCompanyExtras && active && (
+        <div className="hidden min-w-0 flex-1 items-center gap-6 px-4 lg:flex">
+          <div className="min-w-[200px] max-w-[320px] flex-1">
+            <GoalProgress companyId={active.id} compact />
+          </div>
+          <div className="min-w-0 max-w-[360px] flex-1">
+            <DailySummary companyId={active.id} compact />
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
+        {showCompanyExtras && active && <AgentMenu companyId={active.id} />}
         {me && <DerivBalance />}
         {me && active && (
           <div className="relative">

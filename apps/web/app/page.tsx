@@ -3,11 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import AgentDock from "@/components/AgentDock";
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
-import DailySummary from "@/components/DailySummary";
-import GoalProgress from "@/components/GoalProgress";
 import KillSwitch from "@/components/KillSwitch";
 import Landing from "@/components/Landing";
 import SafetyBadges from "@/components/SafetyBadges";
@@ -266,19 +263,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Goal bar + team chips share one row when both exist. Each
-            renders null when empty, so this row vanishes on a cold
-            dashboard instead of stamping an empty strip. */}
-        {active && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="min-w-[260px] flex-1">
-              <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} compact />
-            </div>
-            <div className="min-w-[260px] flex-1">
-              <DailySummary companyId={active.id} compact />
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Main: chart + agents rail. The chart auto-fills available
@@ -311,13 +295,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Bottom dock — talk-to-any-agent strip. ~44px so it never
-          steals real estate but is always one tap away. */}
-      {active && (
-        <div className="h-11 shrink-0 border-t border-border bg-bg-elev-1/60">
-          <AgentDock companyId={active.id} />
-        </div>
-      )}
     </div>
   );
 }

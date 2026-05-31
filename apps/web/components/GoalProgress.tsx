@@ -12,7 +12,11 @@ const FMT_USD = new Intl.NumberFormat("en-US", {
 
 type Props = {
   companyId: string;
-  todayRealizedUsd: number;
+  /** Optional override — page passes its already-fetched PnL to avoid a
+   *  duplicate roundtrip. When omitted, the component fetches today's
+   *  closed intents itself (used by the TopBar mount, which has no
+   *  intents context of its own). */
+  todayRealizedUsd?: number;
   /** Compact inline mode used in the fullscreen dashboard header. Renders
    *  as one row (label · bar · amount) instead of a tile, and stays
    *  invisible when there's no target so the header doesn't grow. */
@@ -26,10 +30,35 @@ type Props = {
  * sees at a glance how the decision loop is currently sizing trades. */
 export default function GoalProgress({ companyId, todayRealizedUsd, compact = false }: Props) {
   const [goals, setGoals] = useState<CompanyGoals | null>(null);
+  const [selfPnl, setSelfPnl] = useState<number | null>(null);
 
   useEffect(() => {
     api.getCompanyGoals(companyId).then(setGoals).catch(() => setGoals(null));
   }, [companyId]);
+
+  // Self-fetch path: TopBar uses this without an intents context. We
+  // refresh on the same 30s cadence as the dashboard's poll. When the
+  // parent already passes a PnL, this fetch never runs.
+  useEffect(() => {
+    if (todayRealizedUsd !== undefined) return;
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await api.listIntents(companyId, "all", 100);
+        if (cancelled) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const total = r.intents
+          .filter((i) => i.closed_at != null && i.closed_at.startsWith(today))
+          .reduce((s, i) => s + (i.realized_pnl_usd ?? 0), 0);
+        setSelfPnl(total);
+      } catch { /* silent — bar just stays at 0 */ }
+    }
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [companyId, todayRealizedUsd]);
+
+  const effectivePnl = todayRealizedUsd ?? selfPnl ?? 0;
 
   if (!goals || goals.daily_profit_target_usd == null) {
     // No target set. In compact mode collapse entirely so the header
@@ -49,7 +78,7 @@ export default function GoalProgress({ companyId, todayRealizedUsd, compact = fa
   }
 
   const target = goals.daily_profit_target_usd;
-  const pnl = todayRealizedUsd;
+  const pnl = effectivePnl;
   // Progress can go negative if the day is in the red — clamp the bar
   // at 0 but keep the label honest.
   const rawProgress = target > 0 ? pnl / target : 0;
