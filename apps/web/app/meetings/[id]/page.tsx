@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import SymbolText from "@/components/SymbolText";
+import MarkdownText from "@/components/MarkdownText";
 import VoiceModal from "@/components/VoiceModal";
 import { api, ApiError, type Agent, type MeetingDetail, type MeetingTurn } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -110,9 +110,7 @@ export default function MeetingDetailPage() {
           <div className="mb-2 text-[10px] uppercase tracking-widest text-text-mute">
             Meeting notes
           </div>
-          <div className="prose prose-invert max-w-none whitespace-pre-line text-sm">
-            <SymbolText>{meeting.narrative}</SymbolText>
-          </div>
+          <MarkdownText>{meeting.narrative}</MarkdownText>
         </section>
       )}
 
@@ -226,9 +224,7 @@ function TurnCard({ t }: { t: MeetingTurn }) {
         ) : null
       )}
       {t.content && !isToolResult && (
-        <div className="whitespace-pre-line text-sm">
-          <SymbolText>{t.content}</SymbolText>
-        </div>
+        <MarkdownText>{t.content}</MarkdownText>
       )}
       {calls.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
