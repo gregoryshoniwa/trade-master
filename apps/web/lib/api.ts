@@ -827,6 +827,9 @@ export type CredentialsStatus = {
   deriv_demo_configured: boolean;
   deriv_real_configured: boolean;
   deriv_environment: "demo" | "real";
+  /** True when active env has no per-company token AND the system has a
+   *  fallback (DERIV_API_TOKEN env). The runtime is using the fallback. */
+  deriv_env_fallback?: boolean;
   anthropic_configured: boolean;
   openai_configured: boolean;
   gemini_configured: boolean;

@@ -137,7 +137,10 @@ async def get_deriv_token(company_id) -> tuple[str | None, str]:
 
 async def get_credentials_status(company_id) -> dict:
     """Returns booleans for which keys are configured, plus
-    `deriv_environment`. NEVER returns plaintext values."""
+    `deriv_environment` and `deriv_env_fallback` (true when the
+    system-owner's DERIV_API_TOKEN is set and the company hasn't
+    pasted its own — so the runtime is using the fallback). NEVER
+    returns plaintext values."""
     async with acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -148,11 +151,13 @@ async def get_credentials_status(company_id) -> dict:
             """,
             company_id,
         )
+    env_fallback_available = bool(os.getenv("DERIV_API_TOKEN"))
     if row is None:
         return {
             "deriv_demo_configured": False,
             "deriv_real_configured": False,
             "deriv_environment": "demo",
+            "deriv_env_fallback": env_fallback_available,
             "anthropic_configured": False,
             "openai_configured": False,
             "gemini_configured": False,
@@ -164,6 +169,12 @@ async def get_credentials_status(company_id) -> dict:
         "deriv_demo_configured": row["deriv_token_demo"] is not None,
         "deriv_real_configured": row["deriv_token_real"] is not None,
         "deriv_environment": row["deriv_environment"],
+        # True when env fallback is set AND the column for the active
+        # environment is null — the runtime is using the system token.
+        "deriv_env_fallback": env_fallback_available and (
+            (row["deriv_environment"] == "demo" and row["deriv_token_demo"] is None)
+            or (row["deriv_environment"] == "real" and row["deriv_token_real"] is None)
+        ),
         "anthropic_configured": row["anthropic_api_key"] is not None,
         "openai_configured": row["openai_api_key"] is not None,
         "gemini_configured": row["gemini_api_key"] is not None,

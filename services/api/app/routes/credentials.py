@@ -29,6 +29,9 @@ class CredentialsStatus(BaseModel):
     deriv_demo_configured: bool
     deriv_real_configured: bool
     deriv_environment: Literal["demo", "real"]
+    # True when the active environment has no per-company token but the
+    # system DERIV_API_TOKEN is set — runtime is using the fallback.
+    deriv_env_fallback: bool = False
     anthropic_configured: bool
     openai_configured: bool
     gemini_configured: bool

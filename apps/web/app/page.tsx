@@ -204,9 +204,9 @@ export default function DashboardPage() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Top strip — header (title + controls) and a single compact data
-          band with stats + goal bar + team chips. Two rows max so the
-          chart gets the rest of the viewport. */}
-      <div className="shrink-0 border-b border-border bg-bg-elev-1/40 px-4 py-2 sm:px-6">
+          band. No divider so the chart blends seamlessly with the strip
+          above it. */}
+      <div className="shrink-0 px-4 py-2 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold tracking-tight">

@@ -617,27 +617,32 @@ export default function TickChart({
         </div>
       </div>
 
-      {/* Floating top-right cluster — mode toggle, indicators, Fit. */}
-      <div className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-2">
+      {/* Floating top-right cluster — one consolidated pill with mode,
+          indicators, fit and live status sharing a single backdrop so
+          they read as one control bar instead of four separate badges
+          fighting for space next to the agents panel. */}
+      <div className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-[11px] backdrop-blur">
         <ModeToggle value={mode} onChange={setMode} />
+        <span className="h-4 w-px bg-border" aria-hidden />
         <IndicatorChips
           sma20={showSMA20} onSMA20={setShowSMA20}
           sma50={showSMA50} onSMA50={setShowSMA50}
         />
+        <span className="h-4 w-px bg-border" aria-hidden />
         <button
           type="button"
           onClick={() => chartRef.current?.timeScale().fitContent()}
-          className="rounded-md border border-border bg-bg-card/80 px-2 py-1 text-[11px] text-text-dim backdrop-blur hover:border-accent/40 hover:text-text"
+          className="rounded px-1.5 py-0.5 text-text-dim hover:bg-bg-elev-2 hover:text-text"
           title="Fit all data into view"
         >
           Fit
         </button>
-        <div
-          className={`flex items-center gap-1 rounded-md border border-border bg-bg-card/80 px-2 py-1 text-[11px] backdrop-blur ${connected ? "text-bull" : "text-bear"}`}
+        <span
+          className={`rounded px-1.5 py-0.5 ${connected ? "text-bull" : "text-bear"}`}
           title={`${tickCount} ticks${historyRows != null ? ` · ${historyRows} backfill` : ""}`}
         >
           {connected ? "● live" : "○ off"}
-        </div>
+        </span>
       </div>
 
       {/* The canvas itself fills the wrapper. The bottom info strip
@@ -748,7 +753,7 @@ function IndicatorChips({
   sma50: boolean; onSMA50: (v: boolean) => void;
 }) {
   return (
-    <div className="flex gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-xs backdrop-blur">
+    <div className="flex gap-0.5">
       <Chip on={sma20} onClick={() => onSMA20(!sma20)} tone="bull">SMA 20</Chip>
       <Chip on={sma50} onClick={() => onSMA50(!sma50)} tone="bear">SMA 50</Chip>
     </div>
@@ -765,7 +770,7 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded px-2 py-1 transition ${on ? onCls : "text-text-mute hover:text-text"}`}
+      className={`rounded px-2 py-0.5 transition ${on ? onCls : "text-text-mute hover:text-text"}`}
     >
       {children}
     </button>
@@ -778,13 +783,13 @@ function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: Chart
     { v: "candles", label: "Candles" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-xs backdrop-blur">
+    <div className="flex gap-0.5">
       {opts.map((o) => (
         <button
           key={o.v}
           type="button"
           onClick={() => onChange(o.v)}
-          className={`rounded px-2 py-1 transition ${
+          className={`rounded px-2 py-0.5 transition ${
             value === o.v ? "bg-accent text-white" : "text-text-dim hover:text-text"
           }`}
         >

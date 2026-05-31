@@ -129,10 +129,25 @@ function DerivSection({ companyId }: { companyId: string }) {
         )}
       </div>
 
+      {/* When the active env has no per-company token but the system
+          DERIV_API_TOKEN is set, surface that explicitly so the user
+          knows trading still works without pasting their own yet. */}
+      {status?.deriv_env_fallback && (
+        <div className="rounded-md border border-warning/40 bg-warning-soft/40 px-3 py-2 text-xs text-warning">
+          Using the system's <span className="num">DERIV_API_TOKEN</span> as a
+          fallback for the <span className="num">{env}</span> environment.
+          Paste your own below to bind trades to your account.
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Demo token"
-          hint={status?.deriv_demo_configured ? "Configured. Paste a new one to replace." : "Not configured."}
+          hint={status?.deriv_demo_configured
+            ? "Configured. Paste a new one to replace."
+            : status?.deriv_env_fallback && env === "demo"
+              ? "Not configured (using system fallback)."
+              : "Not configured."}
         >
           <div className="flex gap-2">
             <input
@@ -152,7 +167,11 @@ function DerivSection({ companyId }: { companyId: string }) {
         </Field>
         <Field
           label="Real token"
-          hint={status?.deriv_real_configured ? "Configured. Paste a new one to replace." : "Not configured (paper-mode is fine without one)."}
+          hint={status?.deriv_real_configured
+            ? "Configured. Paste a new one to replace."
+            : status?.deriv_env_fallback && env === "real"
+              ? "Not configured (using system fallback)."
+              : "Not configured (paper-mode is fine without one)."}
         >
           <div className="flex gap-2">
             <input
