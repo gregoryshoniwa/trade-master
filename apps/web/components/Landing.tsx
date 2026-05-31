@@ -144,6 +144,44 @@ const METRICS = [
   { label: "Voice cold start", value: "<1s", sub: "real-time bidirectional" },
 ];
 
+type HonestyTone = "warn" | "bear" | "info" | "bull";
+
+const HONESTY: {
+  title: string;
+  body: string;
+  tag: string;
+  tone: HonestyTone;
+  metric?: { label: string; value: string; tone: "good" | "warn" };
+}[] = [
+  {
+    title: "No backtest shows reliable real-money edge yet.",
+    body: "Walk-forward across 1.5M+ windows lands at 51–55% hit-rate before fees. Paper-mode is the default; flipping to real money requires a WebAuthn passkey.",
+    tag: "Caveat",
+    tone: "warn",
+    metric: { label: "Hit-rate band:", value: "51–55%", tone: "warn" },
+  },
+  {
+    title: "Calibration helps; it doesn't print money.",
+    body: "Brier 0.157 → 0.088 means the confidence number is meaningful — not that 0.65 wins 65% of the time before that fix.",
+    tag: "Nuance",
+    tone: "info",
+    metric: { label: "Brier:", value: "0.157 → 0.088", tone: "good" },
+  },
+  {
+    title: "AI is not financial advice.",
+    body: "Every chat surface says so. The Risk Agent is deterministic; the AI cannot bypass it. The kill switch is one click on every page.",
+    tag: "Legal",
+    tone: "bear",
+  },
+  {
+    title: "Your keys, your bill.",
+    body: "Paste your own broker + AI provider keys in Settings and we charge $0 for tokens or trades. The base tier covers our infrastructure only.",
+    tag: "Promise",
+    tone: "bull",
+    metric: { label: "Token markup:", value: "$0", tone: "good" },
+  },
+];
+
 type ToneT = "bull" | "bear" | "accent" | "muted" | "warning";
 
 const ACCENT_CLASS: Record<string, string> = {
@@ -468,27 +506,79 @@ export default function Landing() {
       </section>
 
       {/* ── Honesty block ────────────────────────────────────────── */}
-      <section className="border-b border-border bg-bg-elev-1 py-20">
-        <div className="mx-auto max-w-3xl px-6">
-          <div data-reveal>
-            <div className="mb-3 text-[10px] uppercase tracking-widest text-accent">Honesty</div>
-            <h2 className="text-3xl font-semibold tracking-tight">
-              What we won't pretend.
+      <section className="relative overflow-hidden border-b border-border bg-bg-elev-1 py-24">
+        {/* Backdrop layers — same family as the hero but quieter so the
+            copy stays the focus. */}
+        <div className="tm-grid absolute inset-0 opacity-70" aria-hidden />
+        <div className="tm-flare-c absolute -left-[10%] top-1/4 h-[420px] w-[420px]" aria-hidden />
+        <div className="tm-flare-b absolute -right-[10%] bottom-0 h-[480px] w-[480px]" aria-hidden />
+        <div className="absolute inset-0 bg-gradient-to-b from-bg-elev-1/40 via-transparent to-bg-elev-1" aria-hidden />
+
+        <div className="relative mx-auto max-w-5xl px-6">
+          <div data-reveal className="mb-12 max-w-2xl">
+            <div className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-accent">
+              <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-accent" />
+              Honesty
+            </div>
+            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              What we <span className="text-bear">won&apos;t pretend</span>.
             </h2>
+            <p className="mt-3 text-sm text-text-dim">
+              Trading platforms over-promise. We list the limits up front so
+              you can decide what to risk.
+            </p>
           </div>
-          <ul className="mt-6 space-y-4 text-sm text-text-dim">
-            {[
-              { strong: "No backtest shows reliable real-money edge yet.", body: " Walk-forward across 1.5M+ windows lands at 51–55% hit-rate before fees. Paper-mode is the default; flipping to real money requires a WebAuthn passkey." },
-              { strong: "Calibration helps; it doesn't print money.", body: " Brier 0.157 → 0.088 means the confidence number is meaningful — not that 0.65 wins 65% of the time before that fix." },
-              { strong: "AI is not financial advice.", body: " Every chat surface says so. The Risk Agent is deterministic; the AI cannot bypass it. The kill switch is one click on every page." },
-              { strong: "Your keys, your bill.", body: " Paste your own broker + AI provider keys in Settings and we charge $0 for tokens or trades. The base tier covers our infrastructure only." },
-            ].map((row, i) => (
-              <li key={i} data-reveal style={{ transitionDelay: `${i * 80}ms` }}
-                className="rounded-md border border-border bg-bg-card p-4">
-                <span className="text-text">{row.strong}</span>{row.body}
-              </li>
+
+          {/* 2×2 asymmetric grid — each card gets a status stripe + icon */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {HONESTY.map((h, i) => (
+              <div
+                key={h.title}
+                data-reveal
+                style={{ transitionDelay: `${i * 80}ms` }}
+                className="group relative overflow-hidden rounded-2xl border border-border bg-bg-card/80 p-5 backdrop-blur transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-glow"
+              >
+                {/* status stripe (left edge) — color codes the kind of caveat */}
+                <span
+                  className={`absolute left-0 top-0 h-full w-1 ${
+                    h.tone === "warn" ? "bg-warning"
+                    : h.tone === "bear" ? "bg-bear"
+                    : h.tone === "info" ? "bg-accent"
+                    : "bg-bull"
+                  } opacity-80 transition group-hover:opacity-100`}
+                  aria-hidden
+                />
+                {/* top-edge glow line that pulses on hover */}
+                <span
+                  className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent opacity-50 transition group-hover:opacity-100"
+                  aria-hidden
+                />
+
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-text">{h.title}</h3>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-widest ${
+                      h.tone === "warn" ? "bg-warning-soft text-warning"
+                      : h.tone === "bear" ? "bg-bear-soft text-bear"
+                      : h.tone === "info" ? "bg-accent-soft text-accent"
+                      : "bg-bull-soft text-bull"
+                    }`}
+                  >
+                    {h.tag}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-text-dim">{h.body}</p>
+                {h.metric && (
+                  <div className="mt-3 inline-flex items-baseline gap-2 rounded-md border border-border bg-bg-elev-2/60 px-2.5 py-1 text-[11px]">
+                    <span className="text-text-mute">{h.metric.label}</span>
+                    <span className={`num ${h.metric.tone === "good" ? "text-bull" : "text-warning"}`}>
+                      {h.metric.value}
+                    </span>
+                  </div>
+                )}
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       </section>
 
