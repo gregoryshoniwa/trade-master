@@ -600,11 +600,13 @@ export default function TickChart({
   const deltaGlyph = delta == null ? "●" : delta >= 0 ? "▲" : "▼";
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Floating top overlay — symbol pill + price. Sits ON the chart
-          instead of stealing vertical space above it. */}
-      <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col gap-1">
-        <div className="pointer-events-auto inline-flex w-fit items-center gap-2 rounded-md border border-border bg-bg-card/80 px-3 py-1.5 backdrop-blur">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Header row sits ABOVE the canvas as a real flex child, not an
+          overlay. Symbol/price left, mode + indicators + Fit + live
+          right. The canvas itself stays clean — no chrome floating on
+          top of price data. */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
+        <div className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-card/60 px-3 py-1.5">
           <span className="text-[10px] uppercase tracking-widest text-text-mute">
             {displayName ?? symbol}
           </span>
@@ -615,39 +617,33 @@ export default function TickChart({
             {deltaGlyph} {delta != null ? fmt.format(Math.abs(delta)) : "—"}
           </span>
         </div>
+        <div className="flex items-center gap-1 rounded-md border border-border bg-bg-card/60 p-1 text-[11px]">
+          <ModeToggle value={mode} onChange={setMode} />
+          <span className="h-4 w-px bg-border" aria-hidden />
+          <IndicatorChips
+            sma20={showSMA20} onSMA20={setShowSMA20}
+            sma50={showSMA50} onSMA50={setShowSMA50}
+          />
+          <span className="h-4 w-px bg-border" aria-hidden />
+          <button
+            type="button"
+            onClick={() => chartRef.current?.timeScale().fitContent()}
+            className="rounded px-1.5 py-0.5 text-text-dim hover:bg-bg-elev-2 hover:text-text"
+            title="Fit all data into view"
+          >
+            Fit
+          </button>
+          <span
+            className={`rounded px-1.5 py-0.5 ${connected ? "text-bull" : "text-bear"}`}
+            title={`${tickCount} ticks${historyRows != null ? ` · ${historyRows} backfill` : ""}`}
+          >
+            {connected ? "● live" : "○ off"}
+          </span>
+        </div>
       </div>
 
-      {/* Floating top-right cluster — one consolidated pill with mode,
-          indicators, fit and live status sharing a single backdrop so
-          they read as one control bar instead of four separate badges
-          fighting for space next to the agents panel. */}
-      <div className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border border-border bg-bg-card/80 p-1 text-[11px] backdrop-blur">
-        <ModeToggle value={mode} onChange={setMode} />
-        <span className="h-4 w-px bg-border" aria-hidden />
-        <IndicatorChips
-          sma20={showSMA20} onSMA20={setShowSMA20}
-          sma50={showSMA50} onSMA50={setShowSMA50}
-        />
-        <span className="h-4 w-px bg-border" aria-hidden />
-        <button
-          type="button"
-          onClick={() => chartRef.current?.timeScale().fitContent()}
-          className="rounded px-1.5 py-0.5 text-text-dim hover:bg-bg-elev-2 hover:text-text"
-          title="Fit all data into view"
-        >
-          Fit
-        </button>
-        <span
-          className={`rounded px-1.5 py-0.5 ${connected ? "text-bull" : "text-bear"}`}
-          title={`${tickCount} ticks${historyRows != null ? ` · ${historyRows} backfill` : ""}`}
-        >
-          {connected ? "● live" : "○ off"}
-        </span>
-      </div>
-
-      {/* The canvas itself fills the wrapper. The bottom info strip
-          sits OUTSIDE the canvas (separate flex child) so the time
-          axis labels never collide with bid/ask/forecast pills. */}
+      {/* Canvas owns the middle slot. Top and bottom rows are real flex
+          siblings, so nothing floats over the grid. */}
       <div ref={containerRef} className="min-h-0 w-full flex-1" />
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pt-2 text-[11px]">
