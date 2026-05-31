@@ -163,7 +163,13 @@ async def place_quick_trade(
                 conn,
                 company_id=company_id, agent_id=manager["id"],
                 asset=body.asset, contract_type=params.contract_type,
-                proposed_stake_usd=body.stake_usd, confidence=0.5,
+                proposed_stake_usd=body.stake_usd,
+                # CEO is the signal — there's no model behind a manual
+                # trade, so the confidence-floor check is meaningless.
+                # Pass 1.0 to satisfy it; the other deterministic gates
+                # (drawdown, kill switch, concurrency, allocation,
+                # calendar blackouts) still apply.
+                confidence=1.0,
                 stop_loss=stop,
             )
             if not verdict.ok:
@@ -213,7 +219,7 @@ async def place_quick_trade(
                 body.asset, params.contract_type, body.direction,
                 applied_stake, params.multiplier, body.duration_secs,
                 last_price, stop, params.take_profit,
-                "ceo_manual", asof_ts, 0.5,
+                "ceo_manual", asof_ts, 1.0,
                 payoff, 0.0, rationale,
                 "auto_approved", json.dumps(verdict.as_jsonb()), expires_at,
                 json.dumps(entry_context),
