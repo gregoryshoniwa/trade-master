@@ -67,6 +67,13 @@ async def evaluate(
     proposed_stake_usd: float,
     confidence: float,
     stop_loss: float | None,
+    # CEO manual trades are attributed to the manager agent (FK
+    # requirement) but the manager doesn't carry a trading allocation.
+    # When this is True we skip the per-agent allocation envelope and
+    # gate against the company's live broker balance instead. All
+    # other checks (drawdown, kill switch, concurrency, calendar)
+    # still apply.
+    is_ceo_trade: bool = False,
 ) -> RiskVerdict:
     checks: list[RiskCheck] = []
 
@@ -288,14 +295,38 @@ async def evaluate(
         agent_id,
     )
     committed = float(committed or 0.0)
-    available = float(agent["allocated_balance_usd"]) - committed
-    alloc_ok = available >= capped_stake
-    checks.append(RiskCheck(
-        "allocation_available", alloc_ok,
-        detail=f"available ${available:.2f} vs needed ${capped_stake:.2f} (committed ${committed:.2f})",
-    ))
-    if not alloc_ok:
-        return _fail("insufficient allocation", checks)
+    if is_ceo_trade:
+        # The manager agent never holds an allocation. For a CEO trade,
+        # only block if the company's actual broker balance can't
+        # cover the stake. We use the cached deriv balance — if it's
+        # not yet populated (cold start), fall through (the broker
+        # will reject ContractBuyPriceExceedsBalance and we'll surface
+        # that as a failed_execution event rather than a risk reject).
+        from app import deriv as deriv_cache
+        snap = deriv_cache.latest(company_id)
+        if snap is not None:
+            broker_bal = float(snap.get("balance") or 0.0)
+            alloc_ok = broker_bal >= capped_stake
+            checks.append(RiskCheck(
+                "broker_balance", alloc_ok,
+                detail=f"broker ${broker_bal:.2f} vs needed ${capped_stake:.2f}",
+            ))
+            if not alloc_ok:
+                return _fail("broker balance below stake", checks)
+        else:
+            checks.append(RiskCheck(
+                "broker_balance", True,
+                detail="balance not yet cached; deferring to broker",
+            ))
+    else:
+        available = float(agent["allocated_balance_usd"]) - committed
+        alloc_ok = available >= capped_stake
+        checks.append(RiskCheck(
+            "allocation_available", alloc_ok,
+            detail=f"available ${available:.2f} vs needed ${capped_stake:.2f} (committed ${committed:.2f})",
+        ))
+        if not alloc_ok:
+            return _fail("insufficient allocation", checks)
 
     return RiskVerdict(ok=True, reason=None, checks=checks, applied_stake_usd=capped_stake)
 

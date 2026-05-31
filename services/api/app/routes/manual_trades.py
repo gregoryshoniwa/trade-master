@@ -167,10 +167,13 @@ async def place_quick_trade(
                 # CEO is the signal — there's no model behind a manual
                 # trade, so the confidence-floor check is meaningless.
                 # Pass 1.0 to satisfy it; the other deterministic gates
-                # (drawdown, kill switch, concurrency, allocation,
-                # calendar blackouts) still apply.
+                # (drawdown, kill switch, concurrency, calendar
+                # blackouts) still apply.
                 confidence=1.0,
                 stop_loss=stop,
+                # Manager has no allocation pool by design; gate against
+                # the company's broker balance instead.
+                is_ceo_trade=True,
             )
             if not verdict.ok:
                 raise HTTPException(
