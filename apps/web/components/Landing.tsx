@@ -237,56 +237,63 @@ export default function Landing() {
         />
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/30 to-bg" aria-hidden />
 
-        <div className="relative mx-auto max-w-6xl px-6 pb-16 pt-10 sm:pb-20 sm:pt-14 lg:pb-24 lg:pt-16">
-          <div className="max-w-2xl" data-reveal>
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
-              <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
-              The first AI firm with real meetings
-            </div>
-            <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-7xl">
-              Trade with a <span className="text-accent">team of AI agents</span> that{" "}
-              <span className="text-bull">meet, review, and rewrite</span> each other.
-            </h1>
-            <p className="mt-7 max-w-xl text-base text-text-dim sm:text-lg">
-              Every other "AI trading" tool is one model in a costume.
-              TradeMaster is a firm: a manager agent, employee traders, a
-              risk officer. They sit down for 1:1 meetings every 4 hours.
-              They write postmortems. They argue. You are the CEO.
-            </p>
-            <div className="mt-9 flex flex-wrap items-center gap-3">
-              <Link href="/signup"
-                className="rounded-md bg-bull px-6 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
-                Start free — no card
-              </Link>
-              <a href="#how"
-                className="rounded-md border border-border bg-bg-card/40 px-6 py-3 text-sm text-text-dim backdrop-blur hover:border-accent/40 hover:text-text">
-                See an AI meeting
-              </a>
-              <span className="text-xs text-text-mute">
-                · paper-mode default · your keys, your spend
-              </span>
+        <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-6xl flex-col px-6 pb-6 pt-6 sm:pb-8 sm:pt-8">
+          {/* Top row: AI-forecast candle card pinned to the upper-right
+              over the globe. Positioned absolutely so it floats and
+              the headline below it gets the full left column. */}
+          <div className="hidden justify-end lg:flex">
+            <div data-reveal>
+              <CandleMini />
             </div>
           </div>
 
-          {/* Candlestick card now lives in the body flow (after copy,
-              above the metrics) so it never collides with the metrics
-              cards. Hidden on small screens for layout breathing room. */}
-          <div className="mt-10 hidden lg:flex lg:justify-end">
-            <CandleMini />
+          {/* Headline + copy. flex-1 so the metrics row settles at the
+              bottom of the viewport. */}
+          <div className="flex flex-1 items-center">
+            <div className="max-w-2xl" data-reveal>
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-bull/40 bg-bull/10 px-3 py-1 text-[10px] uppercase tracking-widest text-bull">
+                <span className="tm-pulse-ring h-1.5 w-1.5 rounded-full bg-bull" />
+                The first AI firm with real meetings
+              </div>
+              <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl xl:text-7xl">
+                Trade with a <span className="text-accent">team of AI agents</span> that{" "}
+                <span className="text-bull">meet, review, and rewrite</span> each other.
+              </h1>
+              <p className="mt-5 max-w-xl text-base text-text-dim sm:text-lg">
+                Every other "AI trading" tool is one model in a costume.
+                TradeMaster is a firm: a manager agent, employee traders, a
+                risk officer. They sit down for 1:1 meetings every 4 hours.
+                They write postmortems. They argue. You are the CEO.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <Link href="/signup"
+                  className="rounded-md bg-bull px-6 py-3 text-sm font-medium text-bg shadow-glow hover:opacity-90">
+                  Start free — no card
+                </Link>
+                <a href="#how"
+                  className="rounded-md border border-border bg-bg-card/40 px-6 py-3 text-sm text-text-dim backdrop-blur hover:border-accent/40 hover:text-text">
+                  See an AI meeting
+                </a>
+                <span className="text-xs text-text-mute">
+                  · paper-mode default · your keys, your spend
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div data-reveal className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {/* Metric strip — pinned to the bottom of the viewport so it
+              shows above the fold. */}
+          <div data-reveal className="mt-6 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
             {METRICS.map((m) => (
               <div
                 key={m.label}
-                className="group relative overflow-hidden rounded-xl border border-border bg-bg-card/80 p-4 backdrop-blur transition hover:border-accent/40"
+                className="group relative overflow-hidden rounded-xl border border-border bg-bg-card/80 p-3 backdrop-blur transition hover:border-accent/40"
               >
-                {/* Top-edge accent line that pulses on hover. */}
                 <span
                   className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent opacity-60 transition group-hover:opacity-100"
                   aria-hidden
                 />
-                <div className="num text-2xl font-semibold">{m.value}</div>
+                <div className="num text-xl font-semibold sm:text-2xl">{m.value}</div>
                 <div className="mt-1 text-[10px] uppercase tracking-widest text-text-mute">
                   {m.label}
                 </div>
@@ -602,44 +609,175 @@ function GlobeVisual({ size = 680 }: { size?: number }) {
   );
 }
 
-/** A compact candlestick mock-chart that sits over the globe to anchor
- *  the "this is a trading product" read. Each candle wipes in via CSS
- *  with a staggered delay. */
+/** Big animated candlestick "AI prediction" panel — sits at the top
+ *  of the hero. 18 historical candles, a live-pulse on the most
+ *  recent one, a dashed AI-forecast projection extending to the
+ *  right, and a moving "scanner" line that sweeps across to evoke
+ *  real-time analysis. */
 function CandleMini() {
-  // Hand-tuned candle bodies — pseudo-random but deterministic so SSR
-  // and hydration agree.
+  // Deterministic but pseudo-random candle pattern (hand-tuned for shape).
   const candles = [
-    { y: 36, h: 28, color: "bear" },
-    { y: 28, h: 22, color: "bear" },
-    { y: 22, h: 18, color: "bear" },
-    { y: 16, h: 16, color: "bull" },
-    { y: 14, h: 22, color: "bull" },
-    { y: 10, h: 18, color: "bear" },
-    { y: 12, h: 26, color: "bull" },
-    { y: 8,  h: 16, color: "bull" },
-    { y: 4,  h: 24, color: "bull" },
-    { y: 6,  h: 14, color: "bear" },
-    { y: 2,  h: 20, color: "bull" },
-    { y: 0,  h: 12, color: "bull" },
+    { y: 58, h: 22, color: "bear" },
+    { y: 56, h: 20, color: "bear" },
+    { y: 52, h: 26, color: "bull" },
+    { y: 46, h: 18, color: "bull" },
+    { y: 50, h: 22, color: "bear" },
+    { y: 44, h: 20, color: "bull" },
+    { y: 38, h: 18, color: "bull" },
+    { y: 42, h: 22, color: "bear" },
+    { y: 36, h: 20, color: "bull" },
+    { y: 30, h: 18, color: "bull" },
+    { y: 26, h: 24, color: "bull" },
+    { y: 30, h: 18, color: "bear" },
+    { y: 22, h: 22, color: "bull" },
+    { y: 18, h: 18, color: "bull" },
+    { y: 14, h: 24, color: "bull" },
+    { y: 20, h: 16, color: "bear" },
+    { y: 10, h: 20, color: "bull" },
+    { y: 6,  h: 16, color: "bull" },
+  ];
+  const cellW = 18;
+  const padL = 14;
+  const totalW = padL + candles.length * cellW + 90;
+  const totalH = 120;
+  // Forecast (dashed projection) — 5 future bars extending the trend
+  // slightly upward and widening into an uncertainty cone.
+  const last = candles[candles.length - 1];
+  const lastTop = last.y;
+  const forecastPts = [
+    { x: padL + candles.length * cellW + 4,  y: lastTop - 4 },
+    { x: padL + candles.length * cellW + 22, y: lastTop - 10 },
+    { x: padL + candles.length * cellW + 40, y: lastTop - 16 },
+    { x: padL + candles.length * cellW + 58, y: lastTop - 22 },
+    { x: padL + candles.length * cellW + 76, y: lastTop - 28 },
   ];
   return (
-    <div className="rounded-xl border border-border bg-bg-card/85 p-3 shadow-2xl backdrop-blur">
+    <div className="relative w-[460px] overflow-hidden rounded-2xl border border-accent/30 bg-bg-card/85 p-4 shadow-2xl backdrop-blur">
+      {/* AI badge corner */}
+      <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/15 px-2 py-0.5 text-[10px] uppercase tracking-widest text-accent">
+        <span className="tm-pulse-ring h-1 w-1 rounded-full bg-accent" />
+        AI predicting
+      </div>
+
+      {/* Header line */}
       <div className="mb-2 flex items-center gap-2 text-[10px] text-text-mute">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-bull" />
-        Live · 1m
+        ETH / USD · 1m · live
       </div>
-      <svg viewBox="0 0 160 70" className="h-[80px] w-[180px]" aria-hidden>
-        {candles.map((c, i) => (
-          <g key={i} className="tm-candle" style={{ ["--i" as never]: i } as React.CSSProperties}>
-            <line x1={i * 13 + 8} y1={c.y - 3} x2={i * 13 + 8} y2={c.y + c.h + 3}
-              stroke={c.color === "bull" ? "#26A69A" : "#EF5350"} strokeWidth="1" />
-            <rect
-              x={i * 13 + 4} y={c.y} width="8" height={c.h}
-              fill={c.color === "bull" ? "#26A69A" : "#EF5350"}
-            />
-          </g>
+
+      <svg
+        viewBox={`0 0 ${totalW} ${totalH}`}
+        className="block h-[140px] w-full"
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <defs>
+          <linearGradient id="cand-area" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#26A69A" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#26A69A" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="cand-line" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stopColor="#26A69A" />
+            <stop offset="100%" stopColor="#7DD3FC" />
+          </linearGradient>
+          <radialGradient id="cand-pulse" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"  stopColor="#7DD3FC" stopOpacity="0.9" />
+            <stop offset="60%" stopColor="#7DD3FC" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#7DD3FC" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* Subtle grid */}
+        {[20, 40, 60, 80, 100].map((y) => (
+          <line key={y} x1="0" y1={y} x2={totalW} y2={y}
+            stroke="rgba(148,163,255,0.06)" strokeWidth="1" />
         ))}
+
+        {/* Trend area-fill behind candles */}
+        <path
+          d={
+            "M " + padL + " " + totalH +
+            " " + candles.map((c, i) => `L ${padL + i * cellW + cellW / 2} ${c.y}`).join(" ") +
+            ` L ${padL + candles.length * cellW} ${totalH} Z`
+          }
+          fill="url(#cand-area)"
+        />
+
+        {/* Candles */}
+        {candles.map((c, i) => {
+          const isLast = i === candles.length - 1;
+          const fill = c.color === "bull" ? "#26A69A" : "#EF5350";
+          return (
+            <g key={i} className="tm-candle" style={{ ["--i" as never]: i } as React.CSSProperties}>
+              <line
+                x1={padL + i * cellW + cellW / 2} y1={c.y - 4}
+                x2={padL + i * cellW + cellW / 2} y2={c.y + c.h + 4}
+                stroke={fill} strokeWidth="1"
+              />
+              <rect
+                x={padL + i * cellW + 3} y={c.y}
+                width={cellW - 6} height={c.h}
+                fill={fill}
+                opacity={isLast ? 0.95 : 0.85}
+              />
+              {isLast && (
+                /* Pulsing glow halo on the last (live) candle. */
+                <circle
+                  cx={padL + i * cellW + cellW / 2}
+                  cy={c.y + c.h / 2}
+                  r="18"
+                  fill="url(#cand-pulse)"
+                >
+                  <animate attributeName="r" values="14;22;14" dur="2.2s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.6;0.9;0.6" dur="2.2s" repeatCount="indefinite" />
+                </circle>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Anchor at the last close */}
+        <circle cx={padL + (candles.length - 1) * cellW + cellW / 2} cy={lastTop}
+          r="3" fill="#7DD3FC" />
+
+        {/* AI forecast — dashed projection + uncertainty band */}
+        <polyline
+          points={forecastPts.map((p) => `${p.x},${p.y}`).join(" ")}
+          fill="none" stroke="url(#cand-line)" strokeWidth="2" strokeDasharray="4 4"
+        >
+          <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1.6s" repeatCount="indefinite" />
+        </polyline>
+        {/* Upper / lower uncertainty edges (semi-transparent dashes) */}
+        <polyline
+          points={forecastPts.map((p, i) => `${p.x},${p.y - 6 - i * 0.8}`).join(" ")}
+          fill="none" stroke="#7DD3FC" strokeWidth="1" strokeDasharray="2 4" opacity="0.45"
+        />
+        <polyline
+          points={forecastPts.map((p, i) => `${p.x},${p.y + 6 + i * 0.8}`).join(" ")}
+          fill="none" stroke="#7DD3FC" strokeWidth="1" strokeDasharray="2 4" opacity="0.45"
+        />
+
+        {/* Moving scanner line — sweeps left→right repeatedly */}
+        <g>
+          <line x1="0" y1="0" x2="0" y2={totalH}
+            stroke="rgba(125,211,252,0.55)" strokeWidth="1.5">
+            <animate attributeName="x1" values={`0;${totalW}`} dur="4.2s" repeatCount="indefinite" />
+            <animate attributeName="x2" values={`0;${totalW}`} dur="4.2s" repeatCount="indefinite" />
+          </line>
+        </g>
       </svg>
+
+      {/* Footer row — price + delta + horizon */}
+      <div className="mt-2 flex items-center justify-between text-[11px]">
+        <div className="flex items-baseline gap-2">
+          <span className="num text-bull">▲ +0.31%</span>
+          <span className="num text-text-mute">2,019.84</span>
+        </div>
+        <div className="flex items-center gap-2 text-text-mute">
+          <span>forecast · next 96s</span>
+          <span className="num text-accent">conf 63%</span>
+        </div>
+      </div>
     </div>
   );
 }
