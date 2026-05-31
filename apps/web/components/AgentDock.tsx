@@ -46,7 +46,7 @@ export default function AgentDock({ companyId }: Props) {
 
   return (
     <>
-      <div className="flex h-full items-center gap-3 overflow-x-auto px-3">
+      <div className="flex h-full items-center gap-2 overflow-x-auto px-3">
         <div className="shrink-0 text-[10px] uppercase tracking-widest text-text-mute">
           Talk to
         </div>
@@ -83,18 +83,16 @@ function AgentPill({ agent, onCall }: { agent: Agent; onCall: () => void }) {
         : "border-border bg-bg-card";
 
   return (
-    <div className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 ${tint}`}>
-      <div className="min-w-0">
-        <div className="truncate text-xs font-medium" title={agent.name}>
-          {agent.name}
-        </div>
-        <div className="truncate text-[10px] text-text-mute" title={agent.llm_model}>
-          {agent.llm_provider}/{agent.llm_model}
-        </div>
-      </div>
+    <div className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 ${tint}`}>
+      <span
+        className="max-w-[120px] truncate text-[11px] font-medium"
+        title={`${agent.name} · ${agent.llm_provider}/${agent.llm_model}`}
+      >
+        {agent.name}
+      </span>
       <Link
         href={`/agents/${agent.id}/chat`}
-        className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] text-text-dim hover:border-accent/40 hover:text-text"
+        className="rounded-md border border-border bg-bg px-1.5 py-0.5 text-[10px] text-text-dim hover:border-accent/40 hover:text-text"
         title={`Chat with ${agent.name}`}
       >
         💬
@@ -102,7 +100,7 @@ function AgentPill({ agent, onCall }: { agent: Agent; onCall: () => void }) {
       <button
         type="button"
         onClick={onCall}
-        className="rounded-md border border-bull/40 bg-bull/10 px-2 py-1 text-[11px] text-bull hover:bg-bull/20"
+        className="rounded-md border border-bull/40 bg-bull/10 px-1.5 py-0.5 text-[10px] text-bull hover:bg-bull/20"
         title={`Voice call ${agent.name}`}
       >
         📞

@@ -19,6 +19,9 @@ const FMT_TIME = new Intl.DateTimeFormat("en-US", {
 
 type Props = {
   companyId: string;
+  /** Inline chip row used in the fullscreen dashboard header. Hidden
+   *  on quiet days so the header stays compact. */
+  compact?: boolean;
 };
 
 /** Single-glance "what happened today on the agentic side".
@@ -29,7 +32,7 @@ type Props = {
  *   - the most recent meeting (if any) — with a link to the transcript
  *
  * Hidden if all three are empty, so quiet days don't waste space. */
-export default function DailySummary({ companyId }: Props) {
+export default function DailySummary({ companyId, compact = false }: Props) {
   const [actions, setActions] = useState<ManagerAction[]>([]);
   const [requests, setRequests] = useState<EmployeeMeetingRequest[]>([]);
 
@@ -65,6 +68,53 @@ export default function DailySummary({ companyId }: Props) {
   if (empty) return null;
 
   const lastMeeting = meetings[0] ?? null;
+
+  if (compact) {
+    // Inline chip row — wraps when the header is narrow but stays one
+    // line on desktop. Hover/click each chip to drill into /meetings.
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]">
+        <span className="shrink-0 text-[10px] uppercase tracking-widest text-text-mute">
+          Team
+        </span>
+        {adjustments.length > 0 && (
+          <Chip
+            tone="accent"
+            label={`${adjustments.length} adj`}
+            sub={adjustmentLine(adjustments[0])}
+            href="/manager"
+          />
+        )}
+        {pendingReqs.length > 0 && (
+          <Chip
+            tone="amber"
+            label={`${pendingReqs.length} req`}
+            sub={`${pendingReqs[0].employee_name}: ${truncate(pendingReqs[0].reason, 40)}`}
+            href="/manager"
+          />
+        )}
+        {lastMeeting && (
+          <Chip
+            tone="muted"
+            label={`Meet ${FMT_TIME.format(new Date(lastMeeting.created_at))}`}
+            sub={meetingLine(lastMeeting)}
+            href={`/meetings/${lastMeeting.id}`}
+          />
+        )}
+        {pauses.length > 0 && (
+          <Chip
+            tone="bear"
+            label={pauses.length === 1 ? "1 paused" : `${pauses.length} paused`}
+            sub={pauses[0].employee_name ? `${pauses[0].employee_name}: ${pauses[0].reason ?? ""}` : ""}
+            href="/manager"
+          />
+        )}
+        <Link href="/meetings" className="ml-auto text-[10px] text-accent hover:underline">
+          full feed →
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-4 rounded-2xl border border-border bg-bg-card p-4">
@@ -104,6 +154,26 @@ export default function DailySummary({ companyId }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function Chip({
+  tone, label, sub, href,
+}: {
+  tone: "muted" | "accent" | "amber" | "bear";
+  label: string; sub: string; href: string;
+}) {
+  const cls = {
+    muted:  "border-border bg-bg-card text-text",
+    accent: "border-accent/40 bg-accent-soft text-accent",
+    amber:  "border-warning/40 bg-warning-soft text-warning",
+    bear:   "border-bear/40 bg-bear-soft text-bear",
+  }[tone];
+  return (
+    <Link href={href} title={sub}
+      className={`rounded-full border px-2 py-0.5 text-[11px] transition hover:opacity-90 ${cls}`}>
+      {label}
+    </Link>
   );
 }
 

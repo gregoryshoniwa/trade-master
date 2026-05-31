@@ -205,8 +205,10 @@ export default function DashboardPage() {
   // (the canonical CSS-grid-inside-flex trick).
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Top strip — header + stat row in one compact band. */}
-      <div className="shrink-0 border-b border-border bg-bg-elev-1/40 px-4 py-3 sm:px-6">
+      {/* Top strip — header (title + controls) and a single compact data
+          band with stats + goal bar + team chips. Two rows max so the
+          chart gets the rest of the viewport. */}
+      <div className="shrink-0 border-b border-border bg-bg-elev-1/40 px-4 py-2 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold tracking-tight">
@@ -235,42 +237,49 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Compact stat strip. Hidden on extra-small screens where the
-            data fits the chart's own header. */}
-        <div className="mt-3 hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
-          <CompactStat
-            label="Today's Realized"
-            value={FMT_USD.format(todayPnl)}
-            tone={todayPnl > 0 ? "bull" : todayPnl < 0 ? "bear" : "muted"}
-          />
-          <CompactStat
-            label="Unrealized (open)"
-            value={FMT_USD.format(unrealizedPnl)}
-            tone={unrealizedPnl > 0 ? "bull" : unrealizedPnl < 0 ? "bear" : "muted"}
-            sub={`${openPositions.length} positions`}
-          />
-          <CompactStat
-            label="Intents today"
-            value={String(todays.length)}
-            sub={`${todays.filter((i) => i.status === "executed").length} executed`}
-          />
-          <CompactStat
-            label="Symbol"
-            value={symbolMeta?.display ?? friendlySymbol(symbol)}
-            sub={symbolMeta?.asset_class ?? ""}
-          />
+        {/* Compact data band: stats left, goal middle, team chips right.
+            Each section gracefully collapses when empty; on quiet days
+            this row stays a thin strip instead of forcing whitespace. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
+            <CompactStat
+              label="Today's Realized"
+              value={FMT_USD.format(todayPnl)}
+              tone={todayPnl > 0 ? "bull" : todayPnl < 0 ? "bear" : "muted"}
+            />
+            <CompactStat
+              label="Unrealized (open)"
+              value={FMT_USD.format(unrealizedPnl)}
+              tone={unrealizedPnl > 0 ? "bull" : unrealizedPnl < 0 ? "bear" : "muted"}
+              sub={`${openPositions.length} positions`}
+            />
+            <CompactStat
+              label="Intents today"
+              value={String(todays.length)}
+              sub={`${todays.filter((i) => i.status === "executed").length} executed`}
+            />
+            <CompactStat
+              label="Symbol"
+              value={symbolMeta?.display ?? friendlySymbol(symbol)}
+              sub={symbolMeta?.asset_class ?? ""}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Goal progress + daily summary — collapsible strips. Each
-          renders nothing when there's nothing to show, so on a cold
-          dashboard this whole band collapses to 0px. */}
-      {active && (
-        <div className="shrink-0 px-4 sm:px-6">
-          <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} />
-          <DailySummary companyId={active.id} />
-        </div>
-      )}
+        {/* Goal bar + team chips share one row when both exist. Each
+            renders null when empty, so this row vanishes on a cold
+            dashboard instead of stamping an empty strip. */}
+        {active && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="min-w-[260px] flex-1">
+              <GoalProgress companyId={active.id} todayRealizedUsd={todayPnl} compact />
+            </div>
+            <div className="min-w-[260px] flex-1">
+              <DailySummary companyId={active.id} compact />
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Main: chart + agents rail. The chart auto-fills available
           height (flex-1 + min-h-0), and the rail scrolls internally
@@ -302,10 +311,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Bottom dock — talk-to-any-agent strip. ~56px so it never
+      {/* Bottom dock — talk-to-any-agent strip. ~44px so it never
           steals real estate but is always one tap away. */}
       {active && (
-        <div className="h-14 shrink-0 border-t border-border bg-bg-elev-1/60">
+        <div className="h-11 shrink-0 border-t border-border bg-bg-elev-1/60">
           <AgentDock companyId={active.id} />
         </div>
       )}

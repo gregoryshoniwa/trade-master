@@ -13,6 +13,10 @@ const FMT_USD = new Intl.NumberFormat("en-US", {
 type Props = {
   companyId: string;
   todayRealizedUsd: number;
+  /** Compact inline mode used in the fullscreen dashboard header. Renders
+   *  as one row (label · bar · amount) instead of a tile, and stays
+   *  invisible when there's no target so the header doesn't grow. */
+  compact?: boolean;
 };
 
 /** Dashboard strip showing daily-target progress.
@@ -20,7 +24,7 @@ type Props = {
  * Hidden when no target is set — surfacing an empty bar is just noise.
  * Color and label change as the throttle band approaches so the CEO
  * sees at a glance how the decision loop is currently sizing trades. */
-export default function GoalProgress({ companyId, todayRealizedUsd }: Props) {
+export default function GoalProgress({ companyId, todayRealizedUsd, compact = false }: Props) {
   const [goals, setGoals] = useState<CompanyGoals | null>(null);
 
   useEffect(() => {
@@ -28,8 +32,10 @@ export default function GoalProgress({ companyId, todayRealizedUsd }: Props) {
   }, [companyId]);
 
   if (!goals || goals.daily_profit_target_usd == null) {
-    // No target set — render a thin promotional strip so the feature
-    // is discoverable, but only once we know we don't have data.
+    // No target set. In compact mode collapse entirely so the header
+    // doesn't grow; the verbose discovery hint stays for the legacy
+    // wide layout.
+    if (compact) return null;
     if (goals == null) return null;
     return (
       <div className="mb-4 rounded-2xl border border-border bg-bg-card p-3 text-xs text-text-mute">
@@ -80,6 +86,38 @@ export default function GoalProgress({ companyId, todayRealizedUsd }: Props) {
     red:    "text-bear",
   }[band];
 
+  // Compact mode: one row, mini bar, no card chrome. Designed for the
+  // top strip on the fullscreen dashboard.
+  if (compact) {
+    return (
+      <div className="flex min-w-0 items-center gap-3" title={bandLabel}>
+        <span className="shrink-0 text-[10px] uppercase tracking-widest text-text-mute">
+          Goal
+        </span>
+        <div className="relative h-1.5 min-w-[80px] flex-1 overflow-hidden rounded-full bg-bg-elev-2">
+          <div
+            className={`h-full transition-all ${barClass}`}
+            style={{ width: `${Math.min(100, Math.max(0, rawProgress * 100))}%` }}
+          />
+          {rawProgress > 1 && (
+            <div
+              className="absolute right-0 top-0 h-full bg-bull/30"
+              style={{ width: `${Math.min(50, (rawProgress - 1) * 100)}%` }}
+            />
+          )}
+        </div>
+        <div className="shrink-0 whitespace-nowrap text-[11px]">
+          <span className={`num ${pnl > 0 ? "text-bull" : pnl < 0 ? "text-bear" : "text-text"}`}>
+            {pnl >= 0 ? "+" : ""}{FMT_USD.format(pnl)}
+          </span>
+          <span className="text-text-mute"> / </span>
+          <span className="num">{FMT_USD.format(target)}</span>
+          <span className={`ml-1 num ${labelClass}`}>({(rawProgress * 100).toFixed(0)}%)</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mb-4 rounded-2xl border border-border bg-bg-card p-4">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -100,9 +138,6 @@ export default function GoalProgress({ companyId, todayRealizedUsd }: Props) {
           </span>
         </div>
       </div>
-      {/* Bar canvas. We show two layers when overshoot: the 0-100% region
-          fills normally, and any excess (>100%) tints the trailing 50%
-          extension green to make a clean "you did it" visual. */}
       <div className="relative h-2 w-full overflow-hidden rounded-full bg-bg-elev-2">
         <div
           className={`h-full transition-all ${barClass}`}
@@ -111,9 +146,7 @@ export default function GoalProgress({ companyId, todayRealizedUsd }: Props) {
         {rawProgress > 1 && (
           <div
             className="absolute right-0 top-0 h-full bg-bull/30"
-            style={{
-              width: `${Math.min(50, (rawProgress - 1) * 100)}%`,
-            }}
+            style={{ width: `${Math.min(50, (rawProgress - 1) * 100)}%` }}
           />
         )}
       </div>
