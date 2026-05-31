@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentsPanel, { computeUnrealized } from "@/components/AgentsPanel";
 import AssetPicker from "@/components/AssetPicker";
+import CEOTradePanel from "@/components/CEOTradePanel";
 import DerivBalance from "@/components/DerivBalance";
 import KillSwitch from "@/components/KillSwitch";
 import Landing from "@/components/Landing";
@@ -281,7 +282,7 @@ export default function DashboardPage() {
             highlightedIntentId={selectedIntentId}
           />
         </div>
-        <div className="flex min-h-0 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
           {active && (
             <AgentsPanel
               intents={intents}
@@ -292,6 +293,14 @@ export default function DashboardPage() {
               onIntentClosed={() => {
                 refreshIntents();
               }}
+            />
+          )}
+          {active && (
+            <CEOTradePanel
+              companyId={active.id}
+              symbol={symbol}
+              symbolDisplay={symbolMeta?.display ?? friendlySymbol(symbol)}
+              onPlaced={refreshIntents}
             />
           )}
         </div>

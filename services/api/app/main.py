@@ -26,6 +26,7 @@ from app.decision_loop import start_decision_loop, stop_decision_loop
 from app.routes import activity as activity_routes
 from app.routes import agents as agents_routes
 from app.routes import approvals as approvals_routes
+from app.routes import manual_trades as manual_trades_routes
 from app.routes import attribution as attribution_routes
 from app.routes import billing as billing_routes
 from app.routes import backtests as backtests_routes
@@ -138,6 +139,7 @@ app.include_router(llm_models_routes.router, prefix="/api/v1")
 app.include_router(forecasting_routes.router, prefix="/api/v1")
 app.include_router(payroll_routes.router, prefix="/api/v1")
 app.include_router(approvals_routes.router, prefix="/api/v1")
+app.include_router(manual_trades_routes.router, prefix="/api/v1")
 app.include_router(postmortems_routes.router, prefix="/api/v1")
 app.include_router(manager_actions_routes.router, prefix="/api/v1")
 app.include_router(calibration_routes.router, prefix="/api/v1")

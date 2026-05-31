@@ -120,7 +120,14 @@ export default function TickChart({
 
   const [latest, setLatest] = useState<TickPayload | null>(null);
   const [prev, setPrev] = useState<TickPayload | null>(null);
-  const [forecast, setForecast] = useState<ForecastPayload | null>(null);
+  // forecasts: map model key → latest payload, so the user can flip
+  // between TTM / Kronos / Ensemble without losing the other models'
+  // data. `selectedModel = ""` = take whichever arrived last.
+  const [forecasts, setForecasts] = useState<Record<string, ForecastPayload>>({});
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  // Stable ref for selectedModel so the ws onmessage closure reads the
+  // latest value without resubscribing on every change.
+  const selectedModelRef = useRef<string>("");
   const [connected, setConnected] = useState(false);
   const [tickCount, setTickCount] = useState(0);
   const [historyRows, setHistoryRows] = useState<number | null>(null);
@@ -314,7 +321,7 @@ export default function TickChart({
     curBarRef.current = null;
     setLatest(null);
     setPrev(null);
-    setForecast(null);
+    setForecasts({});
     setTickCount(0);
     setHistoryRows(null);
     p50SeriesRef.current?.setData([]);
@@ -475,9 +482,17 @@ export default function TickChart({
             setTickCount((n) => n + 1);
           } else if (msg.type === "forecast") {
             if (msg.payload.asset !== activeSymbol) return;
-            const fcast = msg.payload.forecast;
-            const anchorTime = msg.payload.asof_ts;
-            const anchorPrice = msg.payload.last_price;
+            const payload = msg.payload;
+            // Always remember the per-model payload so the dropdown can
+            // pivot without waiting for the next message.
+            setForecasts((prev) => ({ ...prev, [payload.model]: payload }));
+            // If a specific model is pinned and this one isn't it, just
+            // store; don't redraw the overlay.
+            const pinned = selectedModelRef.current;
+            if (pinned && pinned !== payload.model) return;
+            const fcast = payload.forecast;
+            const anchorTime = payload.asof_ts;
+            const anchorPrice = payload.last_price;
             const p50Data: LineData[] = [
               { time: anchorTime as UTCTimestamp, value: anchorPrice },
               ...fcast.map((f) => ({ time: f.t as UTCTimestamp, value: f.p50 })),
@@ -493,7 +508,6 @@ export default function TickChart({
             p50SeriesRef.current?.setData(p50Data);
             p10SeriesRef.current?.setData(p10Data);
             p90SeriesRef.current?.setData(p90Data);
-            setForecast(msg.payload);
           }
         } catch {
           /* swallow malformed */
@@ -599,6 +613,52 @@ export default function TickChart({
   const deltaColor = delta == null ? "text-text-mute" : delta >= 0 ? "text-bull" : "text-bear";
   const deltaGlyph = delta == null ? "●" : delta >= 0 ? "▲" : "▼";
 
+  // Resolve which forecast to render in the badge. Pinned model wins;
+  // otherwise the most-recent payload across all models.
+  const forecastEntries = Object.values(forecasts);
+  const activeForecast: ForecastPayload | null = selectedModel
+    ? forecasts[selectedModel] ?? null
+    : (forecastEntries.length
+        ? forecastEntries.reduce((a, b) => (a.asof_ts > b.asof_ts ? a : b))
+        : null);
+
+  // Restore the user's last-picked forecast model from localStorage on
+  // mount, and persist any change so the dashboard stays consistent
+  // across refreshes.
+  useEffect(() => {
+    const v = localStorage.getItem("tm.forecastModel");
+    if (v) {
+      setSelectedModel(v);
+      selectedModelRef.current = v;
+    }
+  }, []);
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+    if (selectedModel) localStorage.setItem("tm.forecastModel", selectedModel);
+    else localStorage.removeItem("tm.forecastModel");
+  }, [selectedModel]);
+
+  // When the user picks a different model, redraw the overlay from the
+  // cached payload (no waiting for the next message).
+  useEffect(() => {
+    if (!activeForecast) return;
+    const fcast = activeForecast.forecast;
+    const anchorTime = activeForecast.asof_ts;
+    const anchorPrice = activeForecast.last_price;
+    p50SeriesRef.current?.setData([
+      { time: anchorTime as UTCTimestamp, value: anchorPrice },
+      ...fcast.map((f) => ({ time: f.t as UTCTimestamp, value: f.p50 })),
+    ]);
+    p10SeriesRef.current?.setData([
+      { time: anchorTime as UTCTimestamp, value: anchorPrice },
+      ...fcast.map((f) => ({ time: f.t as UTCTimestamp, value: f.p10 })),
+    ]);
+    p90SeriesRef.current?.setData([
+      { time: anchorTime as UTCTimestamp, value: anchorPrice },
+      ...fcast.map((f) => ({ time: f.t as UTCTimestamp, value: f.p90 })),
+    ]);
+  }, [selectedModel, activeForecast?.asof_ts]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header row sits ABOVE the canvas as a real flex child, not an
@@ -654,9 +714,18 @@ export default function TickChart({
             latest ? new Date(latest.epoch * 1000).toLocaleTimeString("en-GB", { hour12: false }) : "—"
           } />
         </div>
-        {forecast && (
-          <div className="max-w-[260px] rounded-md border border-warning/40 bg-bg-card/60 px-3 py-1">
-            <ForecastBadge forecast={forecast} />
+        {(activeForecast || forecastEntries.length > 0) && (
+          <div className="flex max-w-[420px] items-center gap-2 rounded-md border border-warning/40 bg-bg-card/60 px-3 py-1">
+            {activeForecast
+              ? <ForecastBadge forecast={activeForecast} />
+              : <span className="text-[11px] text-text-mute">no forecast yet</span>}
+            {forecastEntries.length > 0 && (
+              <ForecastModelPicker
+                selected={selectedModel}
+                models={forecastEntries.map((f) => f.model)}
+                onChange={setSelectedModel}
+              />
+            )}
           </div>
         )}
       </div>
@@ -793,6 +862,30 @@ function ModeToggle({ value, onChange }: { value: ChartMode; onChange: (m: Chart
         </button>
       ))}
     </div>
+  );
+}
+
+/** Tiny picker that lets the CEO flip between forecasters in real time.
+ *  Empty string means "follow the latest publisher" — the dashboard
+ *  default since fresh installs don't know which model their agents
+ *  prefer. */
+function ForecastModelPicker({
+  selected, models, onChange,
+}: { selected: string; models: string[]; onChange: (m: string) => void }) {
+  const opts = ["", ...Array.from(new Set(models)).sort()];
+  return (
+    <select
+      value={selected}
+      onChange={(e) => onChange(e.target.value)}
+      title="Pin which forecaster to show on the chart"
+      className="num rounded border border-border bg-bg-card/80 px-1.5 py-0.5 text-[10px] text-text-dim hover:border-accent/40 focus:border-accent focus:outline-none"
+    >
+      {opts.map((m) => (
+        <option key={m || "auto"} value={m}>
+          {m ? friendlyForecasterName(m) : "Auto"}
+        </option>
+      ))}
+    </select>
   );
 }
 

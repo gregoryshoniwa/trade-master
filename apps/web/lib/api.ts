@@ -544,6 +544,24 @@ export const api = {
       `/api/v1/companies/${companyId}/intents?status=${status}&limit=${limit}`,
     ),
 
+  /** One-shot CEO trade: create + auto-approve + publish to gateway.
+   *  Manager agent is auto-selected as the on-paper attribution; the
+   *  entry_context marks `sizing.method = "ceo_manual"`. */
+  placeQuickTrade: (
+    companyId: string,
+    body: {
+      asset: string;
+      direction: "up" | "down";
+      stake_usd: number;
+      duration_secs?: number;
+      reason?: string;
+    },
+  ) =>
+    request<QuickTradeResult>(
+      `/api/v1/companies/${companyId}/trades/quick`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
   approveIntent: (companyId: string, intentId: string, reason?: string) =>
     request<TradeIntent>(
       `/api/v1/companies/${companyId}/approvals/${intentId}/approve`,
@@ -1060,6 +1078,17 @@ export type RiskVerdict = {
   reason: string | null;
   checks: RiskCheck[];
   applied_stake_usd: number | null;
+};
+
+export type QuickTradeResult = {
+  intent_id: string;
+  asset: string;
+  direction: "up" | "down";
+  contract_type: string;
+  stake_usd: number;
+  duration_secs: number;
+  entry_price: number;
+  status: string;
 };
 
 export type TradeIntent = {
