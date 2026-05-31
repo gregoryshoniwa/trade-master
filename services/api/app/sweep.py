@@ -3,12 +3,14 @@
 Once an hour we walk every active agent. For each one we look at the
 realized P&L over a rolling window (default: last 7 days), and if it
 exceeds a sweep threshold (default: 50% of allocation), we move a
-fraction of that profit (default: 25%) into the company's insurance pot
-and decrement the agent's allocation by the same amount.
+fraction of that profit (default: 25%) into the company's safety
+reserve and decrement the agent's allocation by the same amount.
 
 The point is to lock in gains an agent has already earned so a single
-bad streak can't give them all back. The plan calls this "profit sweep
-+ insurance fund" — same idea as a bank's reserve requirement.
+bad streak can't give them all back. Same idea as a bank's reserve
+requirement. User-facing label is "Safety reserve"; the DB column is
+`insurance_balance_usd` (kept for back-compat — renaming the column
+would be a non-trivial migration with no functional payoff).
 
 Sweeps are idempotent: we only sweep what's *above* the threshold, so
 re-running the job within an hour just no-ops. Every sweep is logged in
@@ -117,8 +119,9 @@ async def _sweep_once() -> int:
 
             async with conn.transaction():
                 # The three writes have to happen together so we don't
-                # split the books: insurance up, allocation down,
-                # audit row written.
+                # split the books: reserve up, allocation down,
+                # audit row written. Column stays `insurance_balance_usd`
+                # for back-compat; user-facing label is "Safety reserve".
                 await conn.execute(
                     "UPDATE companies SET insurance_balance_usd = insurance_balance_usd + $2 WHERE id = $1",
                     r["company_id"], sweep_amount,
@@ -139,7 +142,7 @@ async def _sweep_once() -> int:
                 )
 
             log.info(
-                "sweep agent=%s amount=$%.2f → insurance (window P&L $%.2f / alloc $%.2f)",
+                "sweep agent=%s amount=$%.2f → reserve (window P&L $%.2f / alloc $%.2f)",
                 r["name"], sweep_amount, pnl, alloc,
             )
             swept += 1
